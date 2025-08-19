@@ -370,6 +370,16 @@ export class StartMenu {
     this.root.append(this.bgCanvas, card);
     document.body.appendChild(this.root);
 
+    // Open Shop overlay on click
+    shop.onclick = ()=>{
+      import('./shop').then(m=>{ new m.ShopOverlay(); }).catch(()=>{});
+    };
+    // Listen for coin updates coming from Shop overlay
+    window.addEventListener('coins-updated', (ev: any)=>{
+      const val = Number(ev?.detail);
+      if (Number.isFinite(val)) this.setCoins(val);
+    });
+
     this.updatePreview();
     this.loopBg();
     this.updateLayout();

@@ -79,7 +79,7 @@ export class SkinsGallery {
     this.root.append(this.bgCanvas, header, card);
     document.body.appendChild(this.root);
 
-    this.populateGrid();
+    void this.populateGrid();
     this.loopBg();
   }
 
@@ -129,7 +129,7 @@ export class SkinsGallery {
     this.bgRAF = requestAnimationFrame(step);
   }
 
-  private addThumb(label: string, canvas: HTMLCanvasElement, isShop=false){
+  private addThumb(label: string, canvas: HTMLCanvasElement, opts?: { isShop?: boolean; onClick?: ()=>void; badge?: string }){
     const btn = document.createElement('button');
     Object.assign(btn.style, { border:'0', padding:'0', background:'transparent', cursor:'pointer', position:'relative' } as CSSStyleDeclaration);
 
@@ -141,9 +141,9 @@ export class SkinsGallery {
     // thin outline
     g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.28)'; g.beginPath(); g.arc(size/2, size/2, r, 0, Math.PI*2); g.stroke();
 
-    if (isShop){
+    if (opts?.isShop){
       const badge = document.createElement('span');
-      badge.textContent = 'SHOP';
+      badge.textContent = opts.badge || 'SHOP';
       Object.assign(badge.style, { position:'absolute', left:'6px', top:'6px', padding:'2px 6px', borderRadius:'8px', fontSize:'10px', fontWeight:'900', background:'rgba(52,211,153,0.95)', color:'#052', boxShadow:'0 2px 6px rgba(0,0,0,.25)' } as CSSStyleDeclaration);
       btn.appendChild(badge);
     }
@@ -153,58 +153,91 @@ export class SkinsGallery {
     Object.assign(cap.style, { marginTop:'6px', fontSize:'12px', color:'#dfe6ff', textAlign:'center', opacity:'0.9' } as CSSStyleDeclaration);
 
     btn.append(cv, cap);
-    btn.onclick = ()=>{ this.opts.onPick(canvas); this.close(); };
+    btn.onclick = opts?.onClick ?? (()=>{ this.opts.onPick(canvas); this.close(); });
 
     this.grid.appendChild(btn);
   }
 
-  private populateGrid(){
+  private async populateGrid(){
     // Presets
     const presets: (SkinKind | SkinKind[])[] = FIXED_PRESET_COMBOS;
     presets.forEach((combo, i)=>{
       const c = makeSkinCanvas(combo as any);
-      this.addThumb(typeof combo === 'string' ? combo : `Preset ${i+1}` , c, false);
+      this.addThumb(typeof combo === 'string' ? combo : `Preset ${i+1}` , c, undefined);
     });
 
-    // Divider label
-    const divider = document.createElement('div');
-    divider.textContent = 'Shop Skins';
-    Object.assign(divider.style, { gridColumn:'1 / -1', color:'#aee', fontSize:'12px', opacity:'0.9', margin:'8px 0 0' } as CSSStyleDeclaration);
-    this.grid.appendChild(divider);
-
-    // Shop skins via Vite glob
-    let entries: string[] = [];
+    // Load premium entries via Vite glob
+    const urlMap: Record<string,string> = {};
     try {
-      const globbed = (import.meta as any).glob('../shop/skins/*.{png,jpg,jpeg,webp,svg}', { eager:true, as:'url' }) as Record<string,string>;
-      entries = Object.values(globbed);
-    } catch {
-      entries = [
-        new URL('../shop/skins/1.png', import.meta.url).toString(),
-        new URL('../shop/skins/2.png', import.meta.url).toString(),
-        new URL('../shop/skins/3.png', import.meta.url).toString(),
-        new URL('../shop/skins/4.png', import.meta.url).toString(),
-        new URL('../shop/skins/5.png', import.meta.url).toString(),
-      ];
+      const globbed = (import.meta as any).glob('../premium/*.{png,jpg,jpeg,webp,svg}', { eager:true, as:'url' }) as Record<string,string>;
+      for (const [path, url] of Object.entries(globbed)){
+        const base = (path.split('/').pop() || '').split('.')[0];
+        urlMap[base] = url as string;
+      }
+    } catch {}
+
+    // Fetch owned skins if logged in
+    let owned: Record<string, boolean> = {};
+    try {
+      const { auth } = await import('./firebase');
+      const user = auth.currentUser;
+      if (user?.uid){
+        const { fetchUserSkins } = await import('./recordsCloud');
+        owned = await fetchUserSkins(user.uid) || {};
+      }
+    } catch {}
+
+    // Meine Skins section (if any)
+    const ownedIds = Object.keys(owned).filter(k=> owned[k]);
+    if (ownedIds.length){
+      const dividerMine = document.createElement('div');
+      dividerMine.textContent = 'Meine Skins';
+      Object.assign(dividerMine.style, { gridColumn:'1 / -1', color:'#aee', fontSize:'12px', opacity:'0.9', margin:'12px 0 0' } as CSSStyleDeclaration);
+      this.grid.appendChild(dividerMine);
+
+      for (const id of ownedIds){
+        const url = urlMap[id]; if (!url) continue;
+        const img = new Image(); img.crossOrigin='anonymous';
+        img.onload = ()=>{
+          const c = document.createElement('canvas'); c.width = 220; c.height = 220;
+          const g = c.getContext('2d')!; g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
+          const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+          const s = Math.max(220/iw, 220/ih);
+          const dw = Math.round(iw*s), dh = Math.round(ih*s);
+          const dx = Math.round((220 - dw)/2), dy = Math.round((220 - dh)/2);
+          g.clearRect(0,0,220,220); g.drawImage(img, dx, dy, dw, dh);
+          this.addThumb(id, c, undefined);
+        };
+        img.src = url;
+      }
     }
 
-    for (const url of entries){
-      const img = new Image(); img.crossOrigin = 'anonymous';
+    // Shop Skins divider
+    const divider = document.createElement('div');
+    divider.textContent = 'Shop Skins';
+    Object.assign(divider.style, { gridColumn:'1 / -1', color:'#aee', fontSize:'12px', opacity:'0.9', margin:'12px 0 0' } as CSSStyleDeclaration);
+    this.grid.appendChild(divider);
+
+    // Render shop entries; if not owned, clicking opens Shop
+    for (const [id, url] of Object.entries(urlMap)){
+      const img = new Image(); img.crossOrigin='anonymous';
       img.onload = ()=>{
         const c = document.createElement('canvas'); c.width = 220; c.height = 220;
         const g = c.getContext('2d')!; g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
-        g.clearRect(0,0,220,220);
         const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
         const s = Math.max(220/iw, 220/ih);
         const dw = Math.round(iw*s), dh = Math.round(ih*s);
         const dx = Math.round((220 - dw)/2), dy = Math.round((220 - dh)/2);
-        g.drawImage(img, dx, dy, dw, dh);
-        const basename = (url.split('/').pop() || '').split('.')[0];
-        this.addThumb(basename, c, true);
+        g.clearRect(0,0,220,220); g.drawImage(img, dx, dy, dw, dh);
+        const isOwned = !!owned[id];
+        this.addThumb(id, c, {
+          isShop: true,
+          onClick: isOwned ? (()=>{ this.opts.onPick(c); this.close(); }) : (()=>{ import('./shop').then(m=> new m.ShopOverlay()); })
+        });
       };
       img.src = url;
     }
   }
-
   show(){ this.root.style.display = 'grid'; }
   close(){
     // stop rAF loop

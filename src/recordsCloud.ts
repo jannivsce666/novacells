@@ -94,6 +94,7 @@ export async function fetchUserTop10(uid:string): Promise<RecordItem[]> {
 // ---- Coins & profile helpers ----
 function coinsPath(uid:string){ return `users/${uid}/coins`; }
 function bestPath(uid:string){ return `users/${uid}/profile/bestMaxMass`; }
+function skinsPath(uid:string){ return `users/${uid}/skins`; }
 
 export async function fetchUserCoins(uid:string): Promise<number> {
   try {
@@ -121,4 +122,47 @@ export async function setUserBestMax(uid:string, maxMass:number): Promise<void> 
     const current = await getUserBestMax(uid);
     if (maxMass > current) await set(ref(db, bestPath(uid)), Math.floor(maxMass));
   } catch {}
+}
+
+// ---- Skins ownership ----
+export type OwnedSkins = Record<string, boolean>;
+
+export async function fetchUserSkins(uid:string): Promise<OwnedSkins> {
+  try {
+    const snap = await get(child(ref(db), skinsPath(uid)));
+    const val = snap.exists() ? snap.val() : {};
+    if (val && typeof val === 'object') return val as OwnedSkins;
+    return {};
+  } catch { return {}; }
+}
+
+// Purchase a skin: atomically deduct coins and set skins[skinId] = true
+export async function purchaseSkin(uid:string, skinId:string, cost:number): Promise<{ ok: true; coins: number } | { ok: false; reason: string; coins?: number }>{
+  try {
+    const userRef = ref(db, `users/${uid}`);
+    let resultCoins = 0;
+    const res = await runTransaction(userRef, (current) => {
+      const obj = (current && typeof current === 'object') ? { ...current as any } : {} as any;
+      const coins = Math.max(0, Math.floor(Number(obj.coins ?? 0)));
+      if ((obj.skins && obj.skins[skinId]) === true) return current; // already owned, no change
+      if (coins < cost) return; // abort
+      const newCoins = coins - cost;
+      obj.coins = newCoins;
+      obj.skins = obj.skins || {};
+      obj.skins[skinId] = true;
+      return obj;
+    });
+    if (!res.committed){
+      // detect if insufficient funds or already owned
+      const after = res.snapshot?.val();
+      const owned = !!(after && after.skins && after.skins[skinId]);
+      const coins = Number(after?.coins ?? 0);
+      return owned ? { ok:false, reason:'already-owned', coins } : { ok:false, reason:'insufficient-coins', coins };
+    }
+    const after = res.snapshot?.val();
+    resultCoins = Number(after?.coins ?? 0);
+    return { ok:true, coins: Number.isFinite(resultCoins) ? resultCoins : 0 };
+  } catch (e) {
+    return { ok:false, reason:'error' };
+  }
 }
