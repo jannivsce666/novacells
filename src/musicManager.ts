@@ -18,11 +18,9 @@ export class MusicManager {
 
   private loadMusic() {
     const musicFiles = [
-      // Exact filenames with Unicode from the music/ folder
-            'music/⚗️ Mysterious & Inspiring (Music For Videos) - The Climb by Scott Buckley 🇦🇺.mp3',
-      'music/🌋 Free Atmospheric Instrumental Music (For YouTube) - Exhale by @Nomyn 🇫🇷.mp3',
-      'music/Dystopia by Neutrin05 🇺🇸  👹 Calm Dark Electronic Music (No Copyright).mp3'
-
+      'music/1.mp3',
+      'music/2.mp3',
+      'music/3.mp3',
     ];
 
     this.audioElements = musicFiles.map((file, index) => {

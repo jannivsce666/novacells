@@ -16,6 +16,9 @@ export class SkinsGallery {
   private level: LevelDesign;
   private pellets: {x:number;y:number;r:number;vx:number;vy:number;alpha:number;tw:number}[] = [];
   private grid!: HTMLDivElement;
+  // Track rAF to allow cancellation on close
+  private bgRAF?: number;
+  private bgActive: boolean = false;
 
   constructor(private opts: SkinsGalleryOptions){
     // Overlay root
@@ -102,7 +105,10 @@ export class SkinsGallery {
 
   private loopBg(){
     const ctx = this.bgCtx; let tPrev = performance.now();
+    if (this.bgActive) return; // avoid multiple loops
+    this.bgActive = true;
     const step = (ts:number)=>{
+      if (!this.bgActive) return; // stop if closed
       const dt = (ts - tPrev)/1000; tPrev = ts;
       ctx.setTransform(1,0,0,1,0,0);
       const W = this.bgCanvas.width, H = this.bgCanvas.height;
@@ -118,9 +124,9 @@ export class SkinsGallery {
         ctx.fill();
       }
       ctx.restore();
-      requestAnimationFrame(step);
+      this.bgRAF = requestAnimationFrame(step);
     };
-    requestAnimationFrame(step);
+    this.bgRAF = requestAnimationFrame(step);
   }
 
   private addThumb(label: string, canvas: HTMLCanvasElement, isShop=false){
@@ -200,5 +206,10 @@ export class SkinsGallery {
   }
 
   show(){ this.root.style.display = 'grid'; }
-  close(){ this.root.remove(); this.opts.onClose?.(); }
+  close(){
+    // stop rAF loop
+    if (this.bgRAF !== undefined){ cancelAnimationFrame(this.bgRAF); this.bgRAF = undefined; }
+    this.bgActive = false;
+    this.root.remove(); this.opts.onClose?.();
+  }
 }

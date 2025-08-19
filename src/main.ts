@@ -7,7 +7,7 @@ import { addRecord } from './records';
 
 // Also push to cloud leaderboard (top 10 maintained server-side)
 import { pushRecordToCloud } from './recordsCloud';
-import { auth } from './firebase';
+import { auth, onAuthStateChanged } from './firebase';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);
@@ -31,6 +31,41 @@ const menu = new StartMenu({
 });
 menu.show();
 
+// Sync coins and best record on login
+onAuthStateChanged(auth, async (user)=>{
+  if (!user) return;
+  try {
+    const { fetchUserCoins, getUserBestMax } = await import('./recordsCloud');
+    const coins = await fetchUserCoins(user.uid);
+    const best = await getUserBestMax(user.uid);
+    // update StartMenu coin UI if available
+    try { (menu as any).setCoins?.(coins); } catch {}
+    // update results card snippet (best mass)
+    try {
+      const results = (menu as any).resultsCard as HTMLDivElement | undefined;
+      if (results){
+        const metaDiv = results.querySelector('div:nth-child(2)') as HTMLDivElement | null;
+        if (metaDiv && best > 0){
+          metaDiv.innerHTML = `<div style="font-weight:800">Max Masse (Cloud): ${Math.round(best)}</div>`;
+        }
+      }
+    } catch {}
+  } catch {}
+});
+
+function awardCoinsForScore(maxMass:number): number {
+  const m = Math.floor(maxMass);
+  if (m < 100) return 10;                   // <100 => 10 coins
+  if (m >= 500 && m <= 1000) return 100;    // 500..1000 => 100 coins
+  if (m >= 1001 && m <= 5000) return 500;   // 1001..5000 => 500 coins
+  if (m >= 5001 && m <= 10000) return 2000; // 5001..10000 => 2000 coins
+  if (m > 10000) {
+    const extra = Math.floor((m - 10000) / 100) * 10; // +10 per +100 beyond 10k
+    return 2000 + extra;
+  }
+  return 0; // 100..499 (unspecified) => 0 coins
+}
+
 game.onGameOver = (stats)=>{
   // Save record with current skin preview (top 10 handled by records module)
   try {
@@ -41,6 +76,29 @@ game.onGameOver = (stats)=>{
     // Push to cloud as well (best-effort)
     const user = auth.currentUser;
     pushRecordToCloud({ ...rec, uid: user?.uid, name: user?.displayName || undefined });
+    // NEW: save to the user's own records list if logged in
+    if (user?.uid) {
+      import('./recordsCloud')
+        .then(m => m.pushUserRecord(user.uid!, rec))
+        .catch(()=>{});
+    }
+
+    // Coins award
+    const coinsGain = awardCoinsForScore(stats.maxMass);
+    try { (menu as any).setCoins?.(((menu as any).getCoins?.() ?? 0) + coinsGain); } catch {}
+
+    // Persist coins to cloud if logged in
+    const u = auth.currentUser;
+    if (u?.uid) {
+      import('./recordsCloud')
+        .then(async m => {
+          const current = await m.fetchUserCoins(u.uid!);
+          await m.setUserCoins(u.uid!, current + coinsGain);
+          // update profile best max
+          await m.setUserBestMax(u.uid!, stats.maxMass);
+        })
+        .catch(()=>{});
+    }
   } catch {}
   // Music keeps playing per requirements
   showGameOver(stats as any);
@@ -197,4 +255,74 @@ requestAnimationFrame(loop);
 
   setInterval(update, 500);
   update();
+})();
+
+// Mobile fullscreen prompt (for mobile browsers)
+(function mobileFullscreenPrompt(){
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!isMobile || isStandalone) return;
+
+  const doc:any = document;
+  const root:any = document.documentElement;
+  const canFullscreen = !!(doc.fullscreenEnabled || doc.webkitFullscreenEnabled || root.requestFullscreen || root.webkitRequestFullscreen || (root as any).msRequestFullscreen);
+  if (!canFullscreen) return;
+
+  // Avoid double prompt if already fullscreen
+  const isFull = () => !!(document.fullscreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement);
+  if (isFull()) return;
+
+  const overlay = document.createElement('div');
+  Object.assign(overlay.style, {
+    position:'fixed', inset:'0', display:'grid', placeItems:'center', zIndex:'60',
+    background:'linear-gradient(180deg, rgba(0,0,0,.65), rgba(0,0,0,.75))', color:'#fff'
+  } as CSSStyleDeclaration);
+
+  const card = document.createElement('div');
+  Object.assign(card.style, {
+    width:'min(520px, 88vw)', borderRadius:'16px', padding:'20px', textAlign:'center',
+    background:'rgba(10,14,38,0.8)', backdropFilter:'blur(10px)',
+    boxShadow:'0 20px 50px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)'
+  } as CSSStyleDeclaration);
+
+  const h = document.createElement('div');
+  h.textContent = 'Vollbild starten';
+  Object.assign(h.style, { font:'900 20px system-ui, sans-serif', marginBottom:'8px' } as CSSStyleDeclaration);
+
+  const p = document.createElement('div');
+  p.textContent = 'Tippe, um in den Vollbildmodus zu wechseln.';
+  Object.assign(p.style, { opacity:'0.85', marginBottom:'14px' } as CSSStyleDeclaration);
+
+  const btn = document.createElement('button');
+  btn.textContent = 'JETZT SPIELEN';
+  Object.assign(btn.style, {
+    padding:'12px 16px', border:'0', borderRadius:'12px', fontWeight:'900', cursor:'pointer',
+    background:'linear-gradient(90deg, #00ffd5, #7effff)', color:'#023', width:'100%'
+  } as CSSStyleDeclaration);
+
+  const skip = document.createElement('button');
+  skip.textContent = 'Später';
+  Object.assign(skip.style, {
+    marginTop:'10px', padding:'8px 12px', border:'0', borderRadius:'10px', cursor:'pointer',
+    background:'rgba(255,255,255,0.12)', color:'#fff', width:'100%'
+  } as CSSStyleDeclaration);
+
+  const enter = async () => {
+    try {
+      if (root.requestFullscreen) await root.requestFullscreen();
+      else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+      else if ((root as any).msRequestFullscreen) (root as any).msRequestFullscreen();
+    } catch {} finally {
+      overlay.remove();
+    }
+  };
+
+  btn.onclick = enter;
+  overlay.onclick = (e)=>{ if (e.target === overlay) enter(); };
+  overlay.addEventListener('touchstart', (e)=>{ if (e.target === overlay) enter(); }, { passive:true });
+  skip.onclick = ()=> overlay.remove();
+
+  card.append(h, p, btn, skip);
+  overlay.append(card);
+  document.body.appendChild(overlay);
 })();

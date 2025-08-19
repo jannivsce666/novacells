@@ -125,7 +125,7 @@ export function updateBots(params: BotParams, world: WorldInfo, dt:number){
   for (const [, bot] of world.players){
     if (!bot.alive || !bot.isBot) continue;
     const totalM = bot.cells.reduce((s,c)=>s+c.mass,0);
-    // Use same base speed model as players (no extra floor)
+    // Use same base speed model as players (COM-based)
     const botSpeed = speedFromMass(totalM);
     const lc = bot.cells.reduce((a,b)=> a.mass>=b.mass? a:b );
 
@@ -135,14 +135,14 @@ export function updateBots(params: BotParams, world: WorldInfo, dt:number){
 
     const starMul = (bot.invincibleTimer>0) ? 2.0 : 1.0;
     const boostMul = ((bot.speedBoostTimer||0)>0) ? 1.10 : 1.0;
-    const vCap = botSpeed * starMul * boostMul; // desired max like player COM speed
+    const vCap = botSpeed * starMul * boostMul; // identical to player cap by total mass
 
     // If too close to the border: override behavior and run to safe center
     if (edgeDistanceNow < keepDist){
       const avoid = edgeAvoidForce(lc.pos, world.width, world.height, world.pad, keepDist);
       const toCenter = steerToward(lc.pos, { x: world.width/2, y: world.height/2 });
-      let fx = (avoid.x * 6.0 + toCenter.x * 3.5) * botSpeed * 2.0;
-      let fy = (avoid.y * 6.0 + toCenter.y * 3.5) * botSpeed * 2.0;
+      let fx = (avoid.x * 6.0 + toCenter.x * 3.5) * botSpeed * 1.0;
+      let fy = (avoid.y * 6.0 + toCenter.y * 3.5) * botSpeed * 1.0;
       fx += (Math.random()*2 - 1) * 0.25; fy += (Math.random()*2 - 1) * 0.25;
       for (const c of bot.cells){ c.vel.x += fx * dt; c.vel.y += fy * dt; }
       // Clamp after applying forces to player's model speed

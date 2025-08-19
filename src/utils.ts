@@ -12,11 +12,12 @@ export function radiusFromMass(m:number): number {
 }
 
 export function speedFromMass(m:number): number {
-  // Simplified Agar-like curve: speed ≈ base / sqrt(mass), with hard caps
-  // Units here are px/s; 1 tick ≈ 1/60s, so 6.5 px/tick ≈ 390 px/s
-  const V_MIN = 24;    // ≈ 0.4 px/tick
-  const V_MAX = 390;   // ≈ 6.5 px/tick
-  const BASE  = 2100;  // tuned so m=100→~210 px/s, m=1000→~66 px/s, m=5000→~30 px/s
+  // Requested curve: per 30Hz-tick speed ≈ K / sqrt(m), with caps
+  // Convert to px/s (engine integrates with dt): multiply per-tick by 30
+  // Caps: 0.35..6.5 px/tick => 10.5..195 px/s
+  const V_MIN = 10.5;   // px/s
+  const V_MAX = 195;    // px/s
+  const BASE  = 1050;   // 35 px/tick * 30 = 1050 px/s
   const raw = BASE / Math.sqrt(Math.max(1, m));
   return clamp(raw, V_MIN, V_MAX);
 }

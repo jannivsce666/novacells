@@ -142,6 +142,9 @@ export class Game {
   // Bots
   private targetBotCount = 40;
   private maxEatsPerFrame = 64;
+  // Fixed-timestep bot AI (30 Hz)
+  private botTickStep = 1/30; // ~33.3ms
+  private botTickAccum = 0;
 
   // Red viruses
   private redStartMs = 30_000;
@@ -173,6 +176,15 @@ export class Game {
   private meSurvivalMs = 0;
   private meMaxMass = 0;
   private gameOverTriggered = false;
+
+  // Perf: aura throttling
+  private auraEveryN = 5; // compute aura forces every N frames (4–6 recommended)
+  private frameIndex = 0;
+
+  // Movement model (30 Hz ticks with smoothing)
+  private moveTickStep = 1/30;
+  private moveTickAccum = 0;
+  private maxAccel = 900; // px/s^2
 
   constructor(canvas: HTMLCanvasElement){
     this.canvas = canvas;
@@ -700,6 +712,7 @@ export class Game {
     const dt = dtMs/1000;
     const zonePad = this.outsidePad(elapsed);
     const { cx, cy, R } = zoneCircle(this.world.w, this.world.h, zonePad);
+    this.frameIndex++;
 
     // zoom bias
     const ticks = (input as any).wheelTicks || 0;
@@ -744,7 +757,8 @@ export class Game {
       (p as any).magnetTimer = Math.max(0, ((p as any).magnetTimer||0) - dt);
     }
 
-    // Player movement by COM and total speed
+    // Player movement: compute aim direction only (speed handled in 30Hz tick)
+    let aimDir = { x: 1, y: 0 };
     if (me?.cells[0]) {
       let mx = 0, my = 0, M = 0;
       for (const c of me.cells) { mx += c.pos.x * c.mass; my += c.pos.y * c.mass; M += c.mass; }
@@ -753,16 +767,7 @@ export class Game {
       const aim = this.updateWorldPosition(mx, my, scale, input);
       const dx = aim.worldX - mx, dy = aim.worldY - my;
       const dist = Math.hypot(dx, dy) || 1;
-      let dir = { x: dx/dist, y: dy/dist };
-      let speedMul = (input as any).dash ? 1.22 : 1.0;
-      if (me.invincibleTimer>0) speedMul *= 2.0; // star: double speed
-      if ((me.speedBoostTimer||0) > 0) speedMul *= 1.10; // small extra speed during boost
-      const vMag = speedFromMass(Math.max(10, this.totalMass(me))) * speedMul;
-      const targetV = { x: dir.x * vMag, y: dir.y * vMag };
-      for (const c of me.cells) {
-        c.vel.x += (targetV.x - c.vel.x) * 4 * dt;
-        c.vel.y += (targetV.y - c.vel.y) * 4 * dt;
-      }
+      aimDir = { x: dx/dist, y: dy/dist };
 
       // Split input (Space key or mobile split button)
       const wantSplit = !!((input as any).splitPressed || (input as any).split || (input as any).space);
@@ -790,11 +795,35 @@ export class Game {
       }
     }
 
-    // Bot AI
-    updateBots(this.botParams, {
-      width: this.world.w, height:this.world.h, pad: zonePad,
-      pellets: this.pellets, powerups: this.powerups, players: this.players
-    }, dt);
+    // Movement tick @ 30 Hz: set per-cell target velocities using unified curve and caps
+    this.moveTickAccum += dt;
+    let mvSteps = 0;
+    while (this.moveTickAccum >= this.moveTickStep && mvSteps < 2) {
+      // Local player cells: target = aimDir * speedFromMass(cell.mass) * multipliers
+      if (me?.alive) {
+        let speedMul = (input as any).dash ? 1.22 : 1.0;
+        if (me.invincibleTimer>0) speedMul *= 2.0;
+        if ((me.speedBoostTimer||0) > 0) speedMul *= 1.10;
+        for (const c of me.cells){
+          const vCap = speedFromMass(Math.max(1, c.mass)) * speedMul;
+          (c as any)._mvTarget = { x: aimDir.x * vCap, y: aimDir.y * vCap, cap: vCap };
+        }
+      }
+      this.moveTickAccum -= this.moveTickStep;
+      mvSteps++;
+    }
+
+    // Bot AI @ 30 Hz (throttled). Accumulate time and step at fixed rate; cap catch-up to avoid spirals.
+    this.botTickAccum += dt;
+    let steps = 0;
+    while (this.botTickAccum >= this.botTickStep && steps < 2) {
+      updateBots(this.botParams, {
+        width: this.world.w, height: this.world.h, pad: zonePad,
+        pellets: this.pellets, powerups: this.powerups, players: this.players
+      }, this.botTickStep);
+      this.botTickAccum -= this.botTickStep;
+      steps++;
+    }
 
     // integrate cell motion and split flights
     for (const [, p] of this.players){
@@ -830,12 +859,30 @@ export class Game {
             c.vel.y = n.y * maxSpeed;
           }
         } else {
+          // natural damping
           c.vel.x *= 0.92;
           c.vel.y *= 0.92;
+          // Smooth toward movement target (if present) with max acceleration per frame
+          const mv:any = (c as any)._mvTarget;
+          if (mv){
+            const dvx = mv.x - c.vel.x, dvy = mv.y - c.vel.y;
+            const dvm = Math.hypot(dvx, dvy);
+            if (dvm > 0){
+              const maxDelta = this.maxAccel * dt;
+              const s = Math.min(1, maxDelta / dvm);
+              c.vel.x += dvx * s;
+              c.vel.y += dvy * s;
+            }
+          }
         }
-        const maxVel = speedFromMass(c.mass)*1.65;
-        c.vel.x = clamp(c.vel.x, -maxVel, maxVel);
-        c.vel.y = clamp(c.vel.y, -maxVel, maxVel);
+        // Per-cell cap using unified curve + temporary multipliers
+        let mul = 1.0;
+        if (p.invincibleTimer>0) mul *= 2.0;
+        if ((p as any).speedBoostTimer > 0) mul *= 1.10;
+        const vCap = speedFromMass(Math.max(1, c.mass)) * mul;
+        const mag = Math.hypot(c.vel.x, c.vel.y);
+        if (mag > vCap){ const s = vCap / (mag || 1); c.vel.x *= s; c.vel.y *= s; }
+
         c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, this.world.w);
         c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, this.world.h);
 
@@ -856,46 +903,57 @@ export class Game {
 
     // Remove old rectangle zone clamp/damage. Circular is handled above.
 
-    // Star aura: gently attract nearby enemy cells within 10px of surface
-    for (const [, s] of this.players){
-      if (!s.alive || s.invincibleTimer <= 0) continue;
-      for (const sc of s.cells){
-        for (const [, p2] of this.players){
-          if (!p2.alive || p2.id === s.id) continue;
-          // don't pull other invincible players
-          if (p2.invincibleTimer > 0) continue;
-          for (const oc of p2.cells){
-            const dx = sc.pos.x - oc.pos.x, dy = sc.pos.y - oc.pos.y;
-            const d = Math.hypot(dx, dy) || 1;
-            const gap = d - (sc.radius + oc.radius);
-            if (gap <= 10){
-              const nx = dx / d, ny = dy / d;
-              const factor = clamp(1 - Math.max(0, gap) / 10, 0, 1); // 0..1
-              const accel = 120 * factor; // px/s^2, gentle
-              oc.vel.x += nx * accel * dt;
-              oc.vel.y += ny * accel * dt;
+    // Star aura (throttled, r² checks): gently attract nearby enemy cells within 10px of surface
+    if (this.frameIndex % this.auraEveryN === 0) {
+      for (const [, s] of this.players){
+        if (!s.alive || s.invincibleTimer <= 0) continue;
+        for (const sc of s.cells){
+          for (const [, p2] of this.players){
+            if (!p2.alive || p2.id === s.id) continue;
+            if (p2.invincibleTimer > 0) continue; // don't pull other invincible players
+            for (const oc of p2.cells){
+              const dx = sc.pos.x - oc.pos.x, dy = sc.pos.y - oc.pos.y;
+              const sumR = sc.radius + oc.radius;
+              const limit = 10; // within 10px of surface
+              const sumPlus = sumR + limit;
+              const d2 = dx*dx + dy*dy;
+              if (d2 <= sumPlus*sumPlus){
+                const d = Math.sqrt(d2) || 1;
+                const gap = d - sumR;
+                const nx = dx / d, ny = dy / d;
+                const factor = clamp(1 - Math.max(0, gap) / limit, 0, 1); // 0..1
+                // compensate for skipped frames
+                const accel = 120 * factor * this.auraEveryN; // px/s^2
+                oc.vel.x += nx * accel * dt;
+                oc.vel.y += ny * accel * dt;
+              }
             }
           }
         }
       }
     }
 
-    // Magnet aura: attract pellets within 100px of cell surface (when magnet active)
-    for (const [, s] of this.players){
-      const magT = (s as any).magnetTimer || 0;
-      if (!s.alive || magT <= 0) continue;
-      for (const sc of s.cells){
-        for (const pl of this.pellets as any[]){
-          const dx = sc.pos.x - pl.pos.x, dy = sc.pos.y - pl.pos.y;
-          const d = Math.hypot(dx, dy) || 1;
-          const gap = d - sc.radius; // pellet ~ point
-          if (gap <= 100){
-            const nx = dx / d, ny = dy / d;
-            const factor = clamp(1 - Math.max(0, gap) / 100, 0, 1);
-            const accel = 220 * factor; // px/s^2, snappy pull
-            if (!pl.vel) pl.vel = { x: 0, y: 0 };
-            pl.vel.x += nx * accel * dt;
-            pl.vel.y += ny * accel * dt;
+    // Magnet aura (throttled, r² checks): attract pellets within 100px of cell surface
+    if (this.frameIndex % this.auraEveryN === 0) {
+      for (const [, s] of this.players){
+        const magT = (s as any).magnetTimer || 0;
+        if (!s.alive || magT <= 0) continue;
+        for (const sc of s.cells){
+          const reach = sc.radius + 100;
+          const reach2 = reach * reach;
+          for (const pl of this.pellets as any[]){
+            const dx = sc.pos.x - pl.pos.x, dy = sc.pos.y - pl.pos.y;
+            const d2 = dx*dx + dy*dy;
+            if (d2 <= reach2){
+              const d = Math.sqrt(d2) || 1;
+              const gap = d - sc.radius; // pellet ~ point
+              const nx = dx / d, ny = dy / d;
+              const factor = clamp(1 - Math.max(0, gap) / 100, 0, 1);
+              const accel = 220 * factor * this.auraEveryN; // compensate skipped frames
+              if (!pl.vel) pl.vel = { x: 0, y: 0 };
+              pl.vel.x += nx * accel * dt;
+              pl.vel.y += ny * accel * dt;
+            }
           }
         }
       }
@@ -938,10 +996,10 @@ export class Game {
           vel: { x: dir.x * 40, y: dir.y * 40 },
           ang: 0, spin: 0.1, kind: 'green'
         };
-        // clamp into current safe zone so green never spawns at the edge
-        const padCur = this.outsidePad(elapsed);
-        nv.pos.x = clamp(nv.pos.x, padCur + nv.radius, this.world.w - padCur - nv.radius);
-        nv.pos.y = clamp(nv.pos.y, padCur + nv.radius, this.world.h - padCur - nv.radius);
+        // project into current circular safe zone so green never spawns at the edge
+        const dxC = nv.pos.x - cx, dyC = nv.pos.y - cy; const dC = Math.hypot(dxC,dyC) || 1;
+        const maxD = Math.max(0, R - nv.radius - 2);
+        if (dC > maxD){ nv.pos.x = cx + dxC/dC * maxD; nv.pos.y = cy + dyC/dC * maxD; }
         this.viruses.push(nv);
         v.fed = 0;
       }
@@ -960,14 +1018,30 @@ export class Game {
             c.mass += gain;
             c.radius = radiusFromMass(c.mass);
             eaten = true;
-            this.pellets[i] = { pos: { x: rand(40, this.world.w-40), y: rand(40, this.world.h-40) }, mass: rand(1, 4) } as any;
+            // respawn pellet within circular zone
+            const ang = Math.random()*Math.PI*2;
+            const rr  = Math.sqrt(Math.random()) * Math.max(0, R - 60);
+            const px  = cx + Math.cos(ang)*rr;
+            const py  = cy + Math.sin(ang)*rr;
+            this.pellets[i] = { pos: { x: px, y: py }, mass: rand(1, 4) } as any;
             break;
           }
         }
       });
     }
-    while (this.pellets.length < 1000) {
-      this.pellets.push({ pos: { x: rand(40, this.world.w-40), y: rand(40, this.world.h-40) }, mass: rand(1, 4) } as any);
+    // Throttled pellet refill to avoid per-frame spikes
+    {
+      const target = 1000;
+      if (this.pellets.length < target){
+        const toAdd = Math.min(8, target - this.pellets.length);
+        for (let k=0; k<toAdd; k++){
+          const ang = Math.random()*Math.PI*2;
+          const rr  = Math.sqrt(Math.random()) * Math.max(0, R - 60);
+          const px  = cx + Math.cos(ang)*rr;
+          const py  = cy + Math.sin(ang)*rr;
+          this.pellets.push({ pos: { x: px, y: py }, mass: rand(1, 4) } as any);
+        }
+      }
     }
 
     // Viruses update & red bullets
@@ -986,8 +1060,7 @@ export class Game {
       v.pos.x += (v.vel?.x ?? 0) * dt;
       v.pos.y += (v.vel?.y ?? 0) * dt;
 
-      // Circular boundary collision (both green and red)
-      const { cx, cy, R } = zoneCircle(this.world.w, this.world.h, this.outsidePad(elapsed));
+      // Circular boundary collision (both green and red) using cached zone
       const dx = v.pos.x - cx, dy = v.pos.y - cy; const d = Math.hypot(dx,dy) || 1;
       const maxD = Math.max(0, R - v.radius);
       if (d > maxD){
@@ -1054,7 +1127,7 @@ export class Game {
       if (picked) this.powerups.splice(i,1);
     }
     while (this.powerups.length < 22){
-      const pad2 = this.outsidePad(elapsed);
+      const pad2 = zonePad; // reuse cached zone pad
       const extra = spawnPowerUps(this.world.w, this.world.h, 1, pad2, this.viruses);
       if (extra.length>0) this.powerups.push(extra[0]);
     }
@@ -1473,7 +1546,7 @@ export class Game {
     }
 
     // PowerUps
-    for (const pu of this.powerups){ drawPowerUp(ctx, pu); }
+    for ( const pu of this.powerups){ drawPowerUp(ctx, pu); }
 
     // Bullets
     for (const b of this.bullets){

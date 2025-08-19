@@ -18,6 +18,9 @@ export class StartMenu {
   private bgCtx: CanvasRenderingContext2D;
   private level: LevelDesign;
   private menuPellets: {x:number;y:number;r:number;vx:number;vy:number;alpha:number;tw:number}[] = [];
+  // Track rAF for background loop so we can stop it when hidden
+  private bgRAF?: number;
+  private bgActive: boolean = false;
   private nameInput: HTMLInputElement;
   private preview!: HTMLCanvasElement; // hidden offscreen preview for skin rendering
   private currentSkinCanvas!: HTMLCanvasElement;
@@ -30,6 +33,7 @@ export class StartMenu {
   private musicBtn?: HTMLButtonElement;
   private fsBtn?: HTMLButtonElement;
   private presetThumbs: HTMLCanvasElement[] = [];
+  private coinEl?: HTMLDivElement;
 
   constructor(private opts: StartMenuOptions){
     // Overlay root
@@ -64,16 +68,18 @@ export class StartMenu {
     } as CSSStyleDeclaration);
     this.card = card;
 
-    // Music toggle button (top-right)
+    // Music toggle button (top-right) -> speaker icons only
     const musicBtn = document.createElement('button');
-    musicBtn.textContent = this.opts.musicManager?.isCurrentlyPlaying() ? '🎵 Musik an' : '🔇 Musik aus';
+    const musicPlaying = this.opts.musicManager?.isCurrentlyPlaying();
+    musicBtn.textContent = musicPlaying ? '🔊' : '🔈';
     Object.assign(musicBtn.style, {
-      position:'absolute', top:'14px', right:'66px', padding:'8px 12px', border:'0', borderRadius:'10px',
-      background:'rgba(255,255,255,0.1)', color:'#fff', cursor:'pointer'
+      position:'absolute', top:'14px', right:'66px', width:'40px', height:'40px', borderRadius:'50%',
+      border:'0', background:'rgba(255,255,255,0.10)', color:'#fff', cursor:'pointer',
+      display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px'
     } as CSSStyleDeclaration);
     musicBtn.onclick = ()=>{
       this.opts.musicManager?.toggle();
-      musicBtn.textContent = this.opts.musicManager?.isCurrentlyPlaying() ? '🎵 Musik an' : '🔇 Musik aus';
+      musicBtn.textContent = this.opts.musicManager?.isCurrentlyPlaying() ? '🔊' : '🔈';
     };
     this.musicBtn = musicBtn;
 
@@ -96,6 +102,19 @@ export class StartMenu {
     document.addEventListener('msfullscreenchange' as any, updateFs as any);
     this.fsBtn = fsBtn;
 
+    // Coin display (next to music button, with enough spacing)
+    const coin = document.createElement('div');
+    Object.assign(coin.style, {
+      position:'absolute', top:'14px', right:'120px', padding:'8px 12px',
+      borderRadius:'999px', background:'rgba(255,255,255,0.10)', color:'#fff',
+      display:'flex', alignItems:'center', gap:'8px', font:'700 14px system-ui, sans-serif',
+      zIndex: '2', boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.08)'
+    } as CSSStyleDeclaration);
+    const coinIcon = document.createElement('span'); coinIcon.textContent = '🪙';
+    const coinCount = document.createElement('span'); coinCount.textContent = String(this.getCoins());
+    coin.append(coinIcon, coinCount);
+    this.coinEl = coin;
+
     // Grid
     const grid = document.createElement('div');
     Object.assign(grid.style, { display:'grid', gridTemplateColumns:'1fr', gap:'12px', alignItems:'start' } as CSSStyleDeclaration);
@@ -104,7 +123,7 @@ export class StartMenu {
     // Left column: form
     const form = document.createElement('div');
     const title = document.createElement('h1');
-    title.textContent = 'NEON CELLS';
+    title.textContent = 'neoncells.space';
     Object.assign(title.style,{margin:'0 0 14px', letterSpacing:'2px', fontWeight:'900', fontSize:'40px', textAlign:'center',
       background:'linear-gradient(90deg,#9af,#a6f,#6ff,#aff)', WebkitBackgroundClip:'text', color:'transparent'} as unknown as CSSStyleDeclaration);
     this.titleEl = title as HTMLHeadingElement;
@@ -281,6 +300,26 @@ export class StartMenu {
       if (btn){ btn.onclick = ()=> this.openRecordsOverlay(); }
     }, 0);
 
+    // When logged in, show own Top 10 in the Results card
+    onAuthStateChanged(auth, async (user)=>{
+      const metaDiv = results.querySelector('div:nth-child(2)') as HTMLDivElement | null;
+      try {
+        if (user?.uid) {
+          const { fetchUserTop10, fetchUserCoins } = await import('./recordsCloud');
+          const [list, coins] = await Promise.all([
+            fetchUserTop10(user.uid),
+            fetchUserCoins(user.uid)
+          ]);
+          if (list && list.length && metaDiv) {
+            const best = list[0];
+            metaDiv.innerHTML = `<div style=\"font-weight:800\">Max Masse (deine Top 10): ${Math.round(best.maxMass)}</div><div style=\"opacity:.85\">Überlebt: ${Math.round(best.survivedSec)}s</div>`;
+          }
+          // update coin badge
+          this.setCoins(coins);
+        }
+      } catch {}
+    });
+
     // Bottom bar: Starter Pack + Shop + Google / Account
     const bottom = document.createElement('div');
     Object.assign(bottom.style, { position:'absolute', left:'14px', right:'14px', bottom:'12px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px' } as CSSStyleDeclaration);
@@ -307,17 +346,14 @@ export class StartMenu {
         };
       }
     };
-    onAuthStateChanged(auth, (user)=>{
-      setUser(user?.displayName || user?.email || undefined);
-    });
-    // initial
+    onAuthStateChanged(auth, (user)=>{ setUser(user?.displayName || user?.email || undefined); });
     setUser();
 
     bottom.append(starter, shop, account);
     ;(this as any).bottomBar = bottom as HTMLDivElement;
 
     // Append
-    card.append(this.musicBtn!, this.fsBtn!, grid, results, /* side removed */ bottom, this.startBtn);
+    card.append(this.musicBtn!, this.fsBtn!, this.coinEl!, grid, results, /* side removed */ bottom, this.startBtn);
 
     this.root.append(this.bgCanvas, card);
     document.body.appendChild(this.root);
@@ -373,9 +409,13 @@ export class StartMenu {
 
   private loopBg(){
     const ctx = this.bgCtx;
+    // Prevent multiple loops
+    if (this.bgActive) return;
+    this.bgActive = true;
     let tPrev = performance.now();
 
     const step = (ts:number)=>{
+      if (!this.bgActive) return; // stop drawing when hidden
       const dt = (ts - tPrev)/1000; tPrev = ts;
       // ensure identity transform and fresh canvas size every frame
       ctx.setTransform(1,0,0,1,0,0);
@@ -399,9 +439,9 @@ export class StartMenu {
       }
       ctx.restore();
 
-      requestAnimationFrame(step);
+      this.bgRAF = requestAnimationFrame(step);
     };
-    requestAnimationFrame(step);
+    this.bgRAF = requestAnimationFrame(step);
   }
 
   private updateLayout(){
@@ -443,24 +483,34 @@ export class StartMenu {
     const thumb = isMobile ? 46 : 56; for (const cv of this.presetThumbs){ cv.style.width = `${thumb}px`; cv.style.height = `${thumb}px`; }
   }
 
-  show(){ this.root.style.display = 'grid'; }
-  hide(){ this.root.style.display = 'none'; }
+  show(){
+    this.root.style.display = 'grid';
+    // restart background animation when shown
+    if (!this.bgActive) this.loopBg();
+  }
+  hide(){
+    this.root.style.display = 'none';
+    // stop background animation to save CPU
+    if (this.bgRAF !== undefined){
+      cancelAnimationFrame(this.bgRAF);
+      this.bgRAF = undefined;
+    }
+    this.bgActive = false;
+  }
 
   private openRecordsOverlay(){
-    Promise.all([
-      import('./records').then(m=>m.getTopRecords()),
-      import('./recordsCloud').then(m=>m.fetchCloudTop10()).catch(()=>[])
-    ]).then(([localItems, cloudItems])=>{
-      const items = (cloudItems && cloudItems.length>0 ? cloudItems : localItems);
-      const overlay = document.createElement('div');
-      Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'120', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.45)' } as CSSStyleDeclaration);
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'120', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.45)' } as CSSStyleDeclaration);
 
-      const card = document.createElement('div');
-      Object.assign(card.style, { width:'min(840px, 94vw)', maxHeight:'min(80vh, 760px)', overflow:'auto', background:'rgba(8,10,28,0.80)', backdropFilter:'blur(10px)', borderRadius:'16px', padding:'16px', color:'#fff', boxShadow:'0 30px 60px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)' } as CSSStyleDeclaration);
+    const card = document.createElement('div');
+    Object.assign(card.style, { width:'min(840px, 94vw)', maxHeight:'min(80vh, 760px)', overflow:'auto', background:'rgba(8,10,28,0.80)', backdropFilter:'blur(10px)', borderRadius:'16px', padding:'16px', color:'#fff', boxShadow:'0 30px 60px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)' } as CSSStyleDeclaration);
 
-      const head = document.createElement('div'); head.textContent = 'Top 10 Rekorde'; Object.assign(head.style,{ fontWeight:'900', marginBottom:'10px' } as CSSStyleDeclaration);
+    const head = document.createElement('div'); head.textContent = 'Deine Top 10 Rekorde'; Object.assign(head.style,{ fontWeight:'900', marginBottom:'10px' } as CSSStyleDeclaration);
 
-      const list = document.createElement('div');
+    const list = document.createElement('div');
+
+    const render = (items: any[])=>{
+      list.innerHTML = '';
       for (const rec of items){
         const row = document.createElement('div');
         Object.assign(row.style,{ display:'grid', gridTemplateColumns:'56px 1fr auto auto', gap:'10px', alignItems:'center', padding:'8px', borderRadius:'10px', background:'rgba(255,255,255,0.06)', marginBottom:'8px' } as CSSStyleDeclaration);
@@ -474,13 +524,32 @@ export class StartMenu {
         list.append(row);
       }
       if (items.length===0){ const empty=document.createElement('div'); empty.textContent='Keine Rekorde vorhanden.'; Object.assign(empty.style,{ opacity:'.8', padding:'8px'} as CSSStyleDeclaration); list.append(empty); }
+    };
 
-      const close = document.createElement('button'); close.textContent='Schließen'; Object.assign(close.style,{ marginTop:'10px', padding:'10px 14px', border:'0', borderRadius:'10px', fontWeight:'900', background:'#334155', color:'#fff', cursor:'pointer' } as CSSStyleDeclaration);
-      close.onclick = ()=> overlay.remove();
+    // Load user-specific records if logged in; otherwise local top 10
+    const user = auth.currentUser;
+    if (user?.uid) {
+      import('./recordsCloud')
+        .then(m => m.fetchUserTop10(user.uid!))
+        .then(items => render(items))
+        .catch(()=> import('./records').then(m=> render(m.getTopRecords())));
+    } else {
+      import('./records').then(m=> render(m.getTopRecords()));
+    }
 
-      card.append(head, list, close);
-      overlay.append(card);
-      document.body.appendChild(overlay);
-    });
+    const close = document.createElement('button'); close.textContent='Schließen'; Object.assign(close.style,{ marginTop:'10px', padding:'10px 14px', border:'0', borderRadius:'10px', fontWeight:'900', background:'#334155', color:'#fff', cursor:'pointer' } as CSSStyleDeclaration);
+    close.onclick = ()=> overlay.remove();
+
+    card.append(head, list, close);
+    overlay.append(card);
+    document.body.appendChild(overlay);
+  }
+
+  private getCoins(): number {
+    try { const v = localStorage.getItem('neoncells.coins'); return v ? Math.max(0, parseInt(v)) : 0; } catch { return 0; }
+  }
+  setCoins(n:number){
+    try { localStorage.setItem('neoncells.coins', String(Math.max(0, Math.floor(n)))); } catch {}
+    if (this.coinEl){ const spans = this.coinEl.querySelectorAll('span'); if (spans[1]) spans[1].textContent = String(this.getCoins()); }
   }
 }
