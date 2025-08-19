@@ -1,6 +1,6 @@
 // Firebase initialization for Google Login
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { getDatabase } from 'firebase/database';
 
@@ -31,4 +31,4 @@ export const db = getDatabase(app);
 // Auth + Google Provider
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-export { signInWithPopup, onAuthStateChanged };
+export { signInWithPopup, onAuthStateChanged, signOut };

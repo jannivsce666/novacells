@@ -119,7 +119,7 @@ export class Game {
 
   onGameOver?: (stats: GameOverStats)=>void;
 
-  world = { w: 4000, h: 4000 };
+  world = { w: 8000, h: 8000 };
 
   // Shrink-Zone
   shrinkStart = 20_000;
@@ -128,7 +128,8 @@ export class Game {
 
   private currentZoom = 1.0;
   private zoomBias = 0;
-
+  private lastZoneR = Math.min(this.world.w, this.world.h) / 2; // track safe-zone radius for split caps
+  
   // Bot-Parameter
   botParams: BotParams = {
     aggroRadius: 1800,
@@ -153,6 +154,7 @@ export class Game {
   private redMax = 6;
   private redVolleyEvery = 6.5;
   private redBulletsPerVolley = 18;
+  private greenMax = 20; // NEW: cap for green viruses
 
   // Merge & Split
   private mergeTime = 15.0;
@@ -186,6 +188,13 @@ export class Game {
   private moveTickAccum = 0;
   private maxAccel = 900; // px/s^2
 
+  // Mobile perf flags and tunables
+  private isMobile = false;
+  private mobileNoShadows = false;
+  private pelletTarget = 1000;
+  private initialPelletCount = 360;
+  private maxParticles = 900;
+
   constructor(canvas: HTMLCanvasElement){
     this.canvas = canvas;
 
@@ -201,7 +210,32 @@ export class Game {
     this.ctx = ctx;
 
     this.level = new LevelDesign(canvas);
+
+    // Detect mobile (coarse pointer) and apply performance preset
+    try {
+      this.isMobile = typeof window !== 'undefined' && !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    } catch { this.isMobile = false; }
+    this.applyPerfPreset();
+
     updateCanvasSize();
+  }
+
+  private applyPerfPreset(){
+    if (this.isMobile){
+      this.targetBotCount = 22;
+      this.pelletTarget = 700;
+      this.initialPelletCount = Math.max(100, Math.round(this.pelletTarget/6));
+      this.greenMax = Math.min(this.greenMax, 12);
+      this.redMax = Math.min(this.redMax, 3);
+      this.redBulletsPerVolley = Math.min(this.redBulletsPerVolley, 10);
+      this.auraEveryN = Math.max(this.auraEveryN, 8);
+      this.mobileNoShadows = true;
+      this.maxParticles = 350;
+    } else {
+      this.pelletTarget = 1000;
+      this.initialPelletCount = 360;
+      this.maxParticles = 900;
+    }
   }
 
   // Pick a safe spawn position within the current safe zone (inside pad)
@@ -249,7 +283,8 @@ export class Game {
     const { cx, cy, R } = zoneCircle(this.world.w, this.world.h, pad);
     const margin = 160;
     const maxR = Math.max(0, R - margin);
-    for (let i=0;i<count;i++){
+    const n = Math.min(count, this.greenMax); // cap initial greens
+    for (let i=0;i<n;i++){
       const r         = rand(38, 54);
       const spin      = rand(0.05, 0.12);
       const baseSpeed = rand(2, 5);
@@ -335,7 +370,7 @@ export class Game {
   }
 
   resetRound(){
-    this.spawnPellets(360);
+    this.spawnPellets(this.initialPelletCount);
     this.spawnViruses(28);
     this.spawnPowerUps(18);
     this.redSpawnTimer = 0;
@@ -360,11 +395,9 @@ export class Game {
   totalMass(p: PlayerState){ return sum(p.cells, c=>c.mass); }
   largestCell(p: PlayerState){ return p.cells.reduce((a,b)=> a.mass>=b.mass? a : b ); }
 
-  outsidePad(elapsed:number){
-    const t = Math.max(0, elapsed - this.shrinkStart);
-    const shrinkT = Math.max(0, Math.min(1, t/(this.shrinkDur * 2)));
-    const maxShrink = 640; // bigger safe zone padding max
-    return shrinkT * maxShrink;
+  outsidePad(_elapsed:number){
+    // Fixed safe-zone: keep border size constant, no shrink over time
+    return 0;
   }
 
   // —— Virus-Kollision / Essen —— 
@@ -479,12 +512,24 @@ export class Game {
       { x: dir.x*this.splitSpeed, y: dir.y*this.splitSpeed }
     );
 
-    // New: ballistic split flight distance by mass thresholds
-    // <1000 mass: ~7.5× radius; 1000..1999: 0.25×mass px; >=2000: 100px cap
+    // New piecewise ballistic split distance with safe-zone clamp
     let travelDist: number;
-    if (preMass >= 2000) travelDist = 100;
-    else if (preMass >= 1000) travelDist = 0.25 * preMass;
-    else travelDist = out.radius * 7.5;
+    const m = preMass;
+    if (m < 120) {
+      travelDist = out.radius * 12;
+    } else if (m <= 800) {
+      const t = (m - 120) / (800 - 120); // 0..1
+      const k = 12 - 5 * Math.max(0, Math.min(1, t)); // 12 -> 7
+      travelDist = out.radius * k;
+    } else if (m <= 2500) {
+      travelDist = 220;
+    } else {
+      travelDist = 160;
+    }
+    // clamp by current safe-zone radius fraction
+    const zoneCap = Math.max(60, 0.18 * this.lastZoneR);
+    travelDist = Math.min(travelDist, zoneCap);
+
     const target = { x: out.pos.x + dir.x * travelDist, y: out.pos.y + dir.y * travelDist };
     (out as any)._splitTarget = target;
     (out as any)._splitTotal  = travelDist;
@@ -712,6 +757,7 @@ export class Game {
     const dt = dtMs/1000;
     const zonePad = this.outsidePad(elapsed);
     const { cx, cy, R } = zoneCircle(this.world.w, this.world.h, zonePad);
+    this.lastZoneR = R; // remember current safe-zone radius for split range clamp
     this.frameIndex++;
 
     // zoom bias
@@ -853,7 +899,7 @@ export class Game {
             const n = { x: dx/(dist||1), y: dy/(dist||1) };
             const tfrac = clamp(dist / total, 0, 1);
             const v0 = this.splitSpeed * 2.8; // very fast at start
-            const speed = v0 * (0.12 + 0.88 * tfrac); // decelerate as we approach
+            const speed = v0 * (0.20 + 0.80 * tfrac); // gentler decel
             const maxSpeed = Math.min(speed, dist / Math.max(dt, 1e-3));
             c.vel.x = n.x * maxSpeed;
             c.vel.y = n.y * maxSpeed;
@@ -875,13 +921,15 @@ export class Game {
             }
           }
         }
-        // Per-cell cap using unified curve + temporary multipliers
-        let mul = 1.0;
-        if (p.invincibleTimer>0) mul *= 2.0;
-        if ((p as any).speedBoostTimer > 0) mul *= 1.10;
-        const vCap = speedFromMass(Math.max(1, c.mass)) * mul;
-        const mag = Math.hypot(c.vel.x, c.vel.y);
-        if (mag > vCap){ const s = vCap / (mag || 1); c.vel.x *= s; c.vel.y *= s; }
+        // Per-cell cap using unified curve + temporary multipliers (skip during ballistic split)
+        if (!(c as any)._splitTarget) {
+          let mul = 1.0;
+          if (p.invincibleTimer>0) mul *= 2.0;
+          if ((p as any).speedBoostTimer > 0) mul *= 1.10;
+          const vCap = speedFromMass(Math.max(1, c.mass)) * mul;
+          const mag = Math.hypot(c.vel.x, c.vel.y);
+          if (mag > vCap){ const s = vCap / (mag || 1); c.vel.x *= s; c.vel.y *= s; }
+        }
 
         c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, this.world.w);
         c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, this.world.h);
@@ -1000,7 +1048,9 @@ export class Game {
         const dxC = nv.pos.x - cx, dyC = nv.pos.y - cy; const dC = Math.hypot(dxC,dyC) || 1;
         const maxD = Math.max(0, R - nv.radius - 2);
         if (dC > maxD){ nv.pos.x = cx + dxC/dC * maxD; nv.pos.y = cy + dyC/dC * maxD; }
-        this.viruses.push(nv);
+        // cap total green viruses
+        const greens = this.viruses.filter(x => (x as any).kind === 'green').length;
+        if (greens < this.greenMax) this.viruses.push(nv);
         v.fed = 0;
       }
     }
@@ -1031,7 +1081,7 @@ export class Game {
     }
     // Throttled pellet refill to avoid per-frame spikes
     {
-      const target = 1000;
+      const target = this.pelletTarget;
       if (this.pellets.length < target){
         const toAdd = Math.min(8, target - this.pellets.length);
         for (let k=0; k<toAdd; k++){
@@ -1471,6 +1521,7 @@ export class Game {
         hue: Math.floor(180+Math.random()*60),
         type:'streak',
         fade: Math.random()*0.6+0.8
+
       });
     }
     // subtle inward ring impression via a shock that will fade
@@ -1487,6 +1538,10 @@ export class Game {
       }
       p.life -= dt/p.fade;
       if (p.life<=0) this.particles.splice(i,1);
+    }
+    // Global particle cap to avoid overload on mobile
+    if (this.particles.length > this.maxParticles){
+      this.particles.splice(0, this.particles.length - this.maxParticles);
     }
   }
 
@@ -1532,13 +1587,15 @@ export class Game {
     const pad = this.outsidePad(elapsed);
     this.level.drawRainbowBorder(ctx, pad, this.world);
 
-    // Pellets
+    // Pellets (batch)
+    ctx.beginPath();
     for (const pl of this.pellets){
-      ctx.beginPath();
-      ctx.arc(pl.pos.x, pl.pos.y, Math.max(2, Math.sqrt(pl.mass)*0.8), 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
-      ctx.fill();
+      const r = Math.max(2, Math.sqrt(pl.mass)*0.8);
+      ctx.moveTo(pl.pos.x + r, pl.pos.y);
+      ctx.arc(pl.pos.x, pl.pos.y, r, 0, Math.PI*2);
     }
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
+    ctx.fill();
 
     // Viruses
     for (const v of this.viruses){
@@ -1575,7 +1632,7 @@ export class Game {
       if (!p.alive) continue;
       for (const c of p.cells){
         ctx.save();
-        if (p.invincibleTimer>0){
+        if (!this.mobileNoShadows && p.invincibleTimer>0){
           const t = performance.now()/300;
           const hue = Math.floor((t*120)%360);
           ctx.shadowColor = `hsla(${hue},100%,60%,0.9)`;
@@ -1607,10 +1664,12 @@ export class Game {
         ctx.restore();
       }
       const lc = this.largestCell(p);
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.font = '600 14px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`${p.name ?? ''} ${Math.round(this.totalMass(p))}`, lc.pos.x, lc.pos.y - lc.radius - 10);
+      if (!this.isMobile || this.currentZoom >= 1.5){
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = '600 14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${p.name ?? ''} ${Math.round(this.totalMass(p))}`, lc.pos.x, lc.pos.y - lc.radius - 10);
+      }
 
       // subtle tether visual during cooldown to show recombination
       for (let i=0;i<p.cells.length;i++){
@@ -1671,13 +1730,11 @@ export class Game {
     ctx.closePath();
 
     if (vv.kind === 'red') {
-      ctx.shadowColor = 'rgba(255,60,60,0.55)';
-      ctx.shadowBlur = 18;
+      if (!this.mobileNoShadows){ ctx.shadowColor = 'rgba(255,60,60,0.55)'; ctx.shadowBlur = 18; }
       ctx.fillStyle = 'rgba(255, 60, 60, 0.92)';
       ctx.strokeStyle = 'rgba(120, 0, 0, 0.95)';
     } else {
-      ctx.shadowColor = 'rgba(0,255,160,0.45)';
-      ctx.shadowBlur = 14;
+      if (!this.mobileNoShadows){ ctx.shadowColor = 'rgba(0,255,160,0.45)'; ctx.shadowBlur = 14; }
       ctx.fillStyle = 'rgba(66, 245, 152, 0.9)';
       ctx.strokeStyle = 'rgba(0, 120, 60, 0.9)';
     }

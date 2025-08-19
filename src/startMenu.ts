@@ -123,7 +123,7 @@ export class StartMenu {
     // Left column: form
     const form = document.createElement('div');
     const title = document.createElement('h1');
-    title.textContent = 'neoncells.space';
+    title.textContent = 'novacells.space';
     Object.assign(title.style,{margin:'0 0 14px', letterSpacing:'2px', fontWeight:'900', fontSize:'40px', textAlign:'center',
       background:'linear-gradient(90deg,#9af,#a6f,#6ff,#aff)', WebkitBackgroundClip:'text', color:'transparent'} as unknown as CSSStyleDeclaration);
     this.titleEl = title as HTMLHeadingElement;
@@ -161,9 +161,9 @@ export class StartMenu {
     Object.assign(nameRow.style, { display:'flex', alignItems:'center', justifyContent:'center', gap:'8px' } as CSSStyleDeclaration);
     nameRow.append(skinsBtn, this.nameInput);
 
-    // Modes row (Classic / Rush)
+    // Modes row (Classic only)
     const modesRow = document.createElement('div');
-    Object.assign(modesRow.style, { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', width:'min(520px, 92%)', margin:'0 auto' } as CSSStyleDeclaration);
+    Object.assign(modesRow.style, { display:'grid', gridTemplateColumns:'1fr', gap:'12px', width:'min(520px, 92%)', margin:'0 auto' } as CSSStyleDeclaration);
 
     // SVG icon factory (no emojis)
     const ns = 'http://www.w3.org/2000/svg';
@@ -242,13 +242,10 @@ export class StartMenu {
 
     const btnClassic = document.createElement('button');
     decorateBtn(btnClassic, 'Classic', 'play', '#ffa63b', '#ffcc4d');
+    Object.assign(btnClassic.style, { marginTop: '20px' } as CSSStyleDeclaration);
     btnClassic.onclick = ()=>{ this.startBtn.click(); };
 
-    const btnRush = document.createElement('button');
-    decorateBtn(btnRush, 'Rush', 'rush', '#ffd54a', '#ffb300');
-    btnRush.onclick = ()=>{ this.startBtn.click(); };
-
-    modesRow.append(btnClassic, btnRush);
+    modesRow.append(btnClassic);
     ;(this as any).modesRow = modesRow;
 
     // Palette placeholder (gallery handles selection)
@@ -331,6 +328,11 @@ export class StartMenu {
     const gLogo = document.createElement('span'); gLogo.textContent = 'G'; Object.assign(gLogo.style,{ width:'22px', height:'22px', borderRadius:'50%', display:'grid', placeItems:'center', background:'#fff', color:'#4285F4', fontWeight:'900', boxShadow:'inset 0 0 0 1px #ddd' } as CSSStyleDeclaration);
     const gLabel = document.createElement('span'); gLabel.textContent = 'Mit Google anmelden';
     account.append(gLogo, gLabel);
+
+    // Sign-out button
+    const signoutBtn = document.createElement('button'); signoutBtn.textContent = 'Abmelden';
+    Object.assign(signoutBtn.style, { padding:'8px 12px', borderRadius:'999px', background:'rgba(255,255,255,0.92)', color:'#123', fontWeight:'900', border:'0', cursor:'pointer', display:'none' } as CSSStyleDeclaration);
+
     const setUser = (name?:string)=>{
       if (name){
         account.replaceChildren();
@@ -339,17 +341,27 @@ export class StartMenu {
         const nm = document.createElement('span'); nm.textContent = name; Object.assign(nm.style,{ maxWidth:'180px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } as CSSStyleDeclaration);
         account.append(avatar, nm);
         account.onclick = null;
+        signoutBtn.style.display = 'inline-block';
       } else {
         account.replaceChildren(gLogo, gLabel);
         account.onclick = async ()=>{
+          const { auth, googleProvider, signInWithPopup } = await import('./firebase');
           try{ await signInWithPopup(auth, googleProvider); }catch(e){ console.warn('Google sign-in failed', e); }
         };
+        signoutBtn.style.display = 'none';
       }
     };
     onAuthStateChanged(auth, (user)=>{ setUser(user?.displayName || user?.email || undefined); });
     setUser();
 
-    bottom.append(starter, shop, account);
+    signoutBtn.onclick = async ()=>{
+      try{
+        const { auth, signOut } = await import('./firebase');
+        await signOut(auth);
+      }catch(e){ console.warn('Sign out failed', e); }
+    };
+
+    bottom.append(starter, shop, account, signoutBtn);
     ;(this as any).bottomBar = bottom as HTMLDivElement;
 
     // Append
