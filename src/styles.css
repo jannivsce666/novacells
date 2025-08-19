@@ -1,0 +1,3 @@
+html,body{margin:0;height:100%;overflow:hidden;background:#030816}
+canvas#game{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+@keyframes pop{from{transform:scale(.94);opacity:.0}to{transform:scale(1);opacity:1}}
