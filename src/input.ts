@@ -45,6 +45,12 @@ export function bindInput(canvas: HTMLCanvasElement){
     setAim(e.touches[0].clientX, e.touches[0].clientY);
   }, {passive:true});
 
+  // Initialize aim at screen center to prevent auto-drift on mobile before first touch
+  try {
+    const r0 = canvas.getBoundingClientRect();
+    setAim(r0.left + r0.width/2, r0.top + r0.height/2);
+  } catch {}
+
   // zoom bias
   window.addEventListener('wheel', (e)=>{
     state.wheelTicks += Math.sign(e.deltaY);
@@ -203,8 +209,9 @@ function ensureJoystick(canvas: HTMLCanvasElement){
   }
 
   function resetKnob(){
+    // Knopf visuell zurücksetzen, aber Zielkoordinaten NICHT ändern,
+    // damit die letzte Steuer-Richtung beibehalten wird (weiter gleiten)
     knob.style.transform = 'translate(0px, 0px)';
-    setTarget(0,0);
   }
 
   area.addEventListener('touchstart', (e)=>{

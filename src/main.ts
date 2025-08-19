@@ -29,7 +29,63 @@ const menu = new StartMenu({
   },
   musicManager
 });
-menu.show();
+// menu.show(); // moved to after preloader
+
+// Mobile preloader overlay: rainbow spinner + "Gleich geht´s los !" and preload premium skins
+(async function mobilePreloaderThenShow(){
+  const ua = navigator.userAgent || '';
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  if (!isMobile) { menu.show(); return; }
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  Object.assign(overlay.style, {
+    position:'fixed', inset:'0', zIndex:'200', display:'grid', placeItems:'center',
+    background:'linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,.75))', color:'#fff'
+  } as CSSStyleDeclaration);
+  const box = document.createElement('div');
+  Object.assign(box.style, {
+    display:'grid', placeItems:'center', gap:'12px', padding:'20px',
+    borderRadius:'16px', background:'rgba(8,10,28,0.88)', backdropFilter:'blur(8px)',
+    boxShadow:'0 24px 48px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)'
+  } as CSSStyleDeclaration);
+
+  const spinner = document.createElement('div');
+  Object.assign(spinner.style as any, {
+    width:'96px', height:'96px', borderRadius:'50%',
+    background:'conic-gradient(#ff004c, #ff7a00, #ffe600, #21ff00, #00eaff, #7a00ff, #ff00ea, #ff004c)',
+    WebkitMask:'radial-gradient(circle 40px at 50% 50%, transparent 60%, black 61%)',
+    mask:'radial-gradient(circle 40px at 50% 50%, transparent 60%, black 61%)',
+    animation:'nc-spin 1.2s linear infinite'
+  });
+  const style = document.createElement('style');
+  style.textContent = '@keyframes nc-spin { to { transform: rotate(360deg); } }';
+
+  const label = document.createElement('div');
+  label.textContent = 'Gleich geht´s los !';
+  Object.assign(label.style, { font:'900 16px system-ui, sans-serif', letterSpacing:'0.4px' } as CSSStyleDeclaration);
+
+  box.append(spinner, label); overlay.append(style, box); document.body.appendChild(overlay);
+
+  // Prefetch premium skins (shop assets)
+  async function prefetchSkins(){
+    const urls: string[] = [];
+    try {
+      const globbed = (import.meta as any).glob('./premium/*.{png,jpg,jpeg,webp,svg}', { eager:true, as:'url' }) as Record<string,string>;
+      for (const u of Object.values(globbed)) urls.push(u as string);
+    } catch {}
+    try {
+      const globbed2 = (import.meta as any).glob('./shop/skins/*.{png,jpg,jpeg,webp,svg}', { eager:true, as:'url' }) as Record<string,string>;
+      for (const u of Object.values(globbed2)) urls.push(u as string);
+    } catch {}
+    if (urls.length===0) return;
+    await Promise.all(urls.map(u=> new Promise<void>((res)=>{ const img = new Image(); img.crossOrigin='anonymous'; img.onload=()=>res(); img.onerror=()=>res(); img.src=u; })));
+  }
+
+  try { await prefetchSkins(); } catch {}
+  overlay.remove();
+  menu.show();
+})();
 
 // Sync coins and best record on login
 onAuthStateChanged(auth, async (user)=>{

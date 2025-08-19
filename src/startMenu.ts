@@ -370,15 +370,39 @@ export class StartMenu {
     this.root.append(this.bgCanvas, card);
     document.body.appendChild(this.root);
 
-    // Open Shop overlay on click
-    shop.onclick = ()=>{
-      import('./shop').then(m=>{ new m.ShopOverlay(); }).catch(()=>{});
-    };
-    // Listen for coin updates coming from Shop overlay
-    window.addEventListener('coins-updated', (ev: any)=>{
-      const val = Number(ev?.detail);
-      if (Number.isFinite(val)) this.setCoins(val);
-    });
+    // iPhone Chrome: ask for fullscreen and landscape once
+    try {
+      const ua = navigator.userAgent || '';
+      const isIOSChrome = /iPhone|iPod/.test(ua) && /CriOS/.test(ua);
+      const askedKey = 'iosChromeFullscreenAsked';
+      if (isIOSChrome && !localStorage.getItem(askedKey)){
+        const overlay = document.createElement('div');
+        Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'140', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.55)' } as CSSStyleDeclaration);
+        const card = document.createElement('div');
+        Object.assign(card.style, { width:'min(420px, 94vw)', padding:'16px', borderRadius:'14px', background:'rgba(8,10,28,0.92)', color:'#fff', backdropFilter:'blur(8px)', boxShadow:'0 20px 40px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)' } as CSSStyleDeclaration);
+        const h = document.createElement('div'); h.textContent = 'Vollbild & Querformat?'; Object.assign(h.style,{ fontWeight:'900', fontSize:'18px', marginBottom:'8px' } as CSSStyleDeclaration);
+        const p = document.createElement('div'); p.textContent = 'Für das beste Erlebnis auf iPhone (Chrome) bitte Vollbild aktivieren und ins Querformat wechseln.'; Object.assign(p.style,{ opacity:'0.9', marginBottom:'12px' } as CSSStyleDeclaration);
+        const row = document.createElement('div'); Object.assign(row.style,{ display:'flex', gap:'10px', justifyContent:'flex-end' } as CSSStyleDeclaration);
+        const cancel = document.createElement('button'); cancel.textContent='Später'; Object.assign(cancel.style,{ padding:'8px 12px', border:'0', borderRadius:'10px', background:'#334155', color:'#fff', cursor:'pointer', fontWeight:'800' } as CSSStyleDeclaration);
+        const ok = document.createElement('button'); ok.textContent='Jetzt aktivieren'; Object.assign(ok.style,{ padding:'8px 12px', border:'0', borderRadius:'10px', background:'#34d399', color:'#052', cursor:'pointer', fontWeight:'900' } as CSSStyleDeclaration);
+        cancel.onclick = ()=>{ localStorage.setItem(askedKey,'1'); overlay.remove(); };
+        ok.onclick = async ()=>{
+          localStorage.setItem(askedKey,'1');
+          // Try to lock to landscape (may be unsupported on iOS)
+          try { const o = (screen as any).orientation; if (o?.lock) await o.lock('landscape'); } catch {}
+          // Request fullscreen
+          try {
+            const el:any = document.documentElement;
+            if (el.requestFullscreen) await el.requestFullscreen();
+            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            else if ((document.body as any).webkitRequestFullscreen) (document.body as any).webkitRequestFullscreen();
+          } catch {}
+          overlay.remove();
+        };
+        row.append(cancel, ok); card.append(h, p, row); overlay.append(card);
+        document.body.appendChild(overlay);
+      }
+    } catch {}
 
     this.updatePreview();
     this.loopBg();
