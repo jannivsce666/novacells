@@ -4,16 +4,23 @@ export class MusicManager {
   private currentTrackIndex = 0;
   private playing = false;
   private pauseTimeout: number | null = null;
-  private boundAutoStart?: () => void;
+  private boundAutoStart?: (ev?: Event) => void;
+  private unlocked = false;
 
   constructor() {
     this.loadMusic();
-    // Try to start on first user interaction if autoplay is blocked
-    this.boundAutoStart = () => {
+    // Start after first real user gesture; also unlock audio on iOS
+    const handler = async (_e?: Event) => {
+      try { await this.unlock(); } catch {}
       if (!this.playing) this.start();
     };
-    document.addEventListener('pointerdown', this.boundAutoStart, { once: true });
-    document.addEventListener('keydown', this.boundAutoStart, { once: true });
+    this.boundAutoStart = handler;
+    // Attach multiple events for reliability across browsers
+    const opts: AddEventListenerOptions = { once: true, capture: true } as any;
+    document.addEventListener('touchstart', handler, opts);
+    document.addEventListener('pointerdown', handler, opts);
+    document.addEventListener('click', handler, opts);
+    document.addEventListener('keydown', handler, opts);
   }
 
   private loadMusic() {
@@ -23,10 +30,14 @@ export class MusicManager {
       'music/3.mp3',
     ];
 
-    this.audioElements = musicFiles.map((file, index) => {
+    this.audioElements = musicFiles.map((file) => {
       const audio = new Audio(file);
       audio.preload = 'auto';
       audio.volume = 0.35;
+      // inline playback hints for iOS Safari
+      (audio as any).playsInline = true;
+      try { audio.setAttribute('playsinline', 'true'); } catch {}
+      try { audio.setAttribute('webkit-playsinline', 'true'); } catch {}
       audio.addEventListener('ended', () => this.onTrackEnded());
       audio.addEventListener('error', (e) => {
         console.warn(`Could not load music file: ${file}`, e);
@@ -35,6 +46,20 @@ export class MusicManager {
       });
       return audio;
     });
+  }
+
+  private async unlock(){
+    if (this.unlocked) return;
+    // Attempt a muted play/pause cycle within a user gesture to unlock media
+    try {
+      for (const a of this.audioElements){
+        a.muted = true;
+        try { await a.play(); } catch {}
+        try { a.pause(); } catch {}
+        a.muted = false;
+      }
+    } catch {}
+    this.unlocked = true;
   }
 
   private onTrackEnded() {
@@ -52,7 +77,7 @@ export class MusicManager {
     const currentAudio = this.audioElements[this.currentTrackIndex];
     currentAudio.currentTime = 0;
     currentAudio.play().catch((e) => {
-      // If autoplay still blocked, wait for user gesture
+      // If autoplay still blocked, wait for next user gesture
       console.warn('Could not play next track:', e);
     });
   }
@@ -67,7 +92,7 @@ export class MusicManager {
     if (!firstTrack) return;
     firstTrack.currentTime = 0;
     firstTrack.play().catch((e) => {
-      // Autoplay blocked; will start on first interaction
+      // Autoplay blocked; will start on next interaction
       this.playing = false;
       console.warn('Autoplay prevented. Music will start on first user interaction.', e);
     });

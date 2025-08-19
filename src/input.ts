@@ -39,6 +39,8 @@ export function bindInput(canvas: HTMLCanvasElement){
     state.targetX = clientX - r.left;
     state.targetY = clientY - r.top;
   }
+  // Enable custom touch gestures (prevent browser panning/zooming)
+  try { (canvas.style as any).touchAction = 'none'; } catch {}
   window.addEventListener('mousemove', (e)=> setAim(e.clientX, e.clientY));
   canvas.addEventListener('touchmove', (e)=>{
     if (!e.touches[0]) return;
@@ -51,10 +53,37 @@ export function bindInput(canvas: HTMLCanvasElement){
     setAim(r0.left + r0.width/2, r0.top + r0.height/2);
   } catch {}
 
-  // zoom bias
+  // zoom bias (mouse wheel and pinch)
   window.addEventListener('wheel', (e)=>{
     state.wheelTicks += Math.sign(e.deltaY);
   }, {passive:true});
+
+  // Pinch-to-zoom: map distance change to wheelTicks increments
+  let pinchLastDist = 0;
+  const pinchThreshold = 18; // px distance change per tick
+  canvas.addEventListener('touchstart', (e)=>{
+    if (e.touches.length >= 2){
+      const t0 = e.touches[0], t1 = e.touches[1];
+      pinchLastDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      e.preventDefault();
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchmove', (e)=>{
+    if (e.touches.length >= 2){
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const d = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      const delta = d - pinchLastDist;
+      // Convert accumulated delta into discrete ticks
+      if (Math.abs(delta) >= pinchThreshold){
+        const ticks = -Math.round(delta / pinchThreshold); // spread fingers => negative (zoom in)
+        state.wheelTicks += ticks;
+        pinchLastDist = d;
+      }
+      e.preventDefault();
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchend', ()=>{ if ((window as any).TouchEvent) { /* end pinch when fingers lift */ } });
+  canvas.addEventListener('touchcancel', ()=>{ pinchLastDist = 0; });
 
   // keyboard
   window.addEventListener('keydown', (e)=>{

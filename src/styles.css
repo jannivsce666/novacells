@@ -1,3 +1,15 @@
 html,body{margin:0;height:100%;overflow:hidden;background:#030816}
 canvas#game{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+/* Prefer modern viewport units on mobile Safari/Chrome to avoid URL bar issues */
+@supports (height: 100svh){
+  canvas#game{height:100svh}
+}
+@supports (height: 100dvh){
+  canvas#game{height:100dvh}
+}
+/* iOS <16 fallback */
+@supports (-webkit-touch-callout: none){
+  html,body{height:-webkit-fill-available}
+  canvas#game{height:-webkit-fill-available}
+}
 @keyframes pop{from{transform:scale(.94);opacity:.0}to{transform:scale(1);opacity:1}}

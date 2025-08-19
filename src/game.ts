@@ -138,10 +138,9 @@ export class Game {
     edgeAvoidDist: 280,
     wanderJitter: 0.18,    // less jitter, more intent
     interceptLead: 1.2,    // lead more for interception
-  };
-
-  // Bots
-  private targetBotCount = 40;
+  } as any;
+  
+  private targetBotCount = 89;
   private maxEatsPerFrame = 64;
   // Fixed-timestep bot AI (30 Hz)
   private botTickStep = 1/30; // ~33.3ms
@@ -199,11 +198,18 @@ export class Game {
     this.canvas = canvas;
 
     const updateCanvasSize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      this.level?.onResize?.();
+      // Match backing store to CSS pixels to avoid Safari 100vh/URL bar issues
+      const r = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width));
+      const h = Math.max(1, Math.round(r.height));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        this.level?.onResize?.();
+      }
     };
     window.addEventListener('resize', updateCanvasSize);
+    try { (window as any).visualViewport?.addEventListener('resize', updateCanvasSize, { passive: true } as any); } catch {}
 
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no 2d context');
@@ -222,7 +228,7 @@ export class Game {
 
   private applyPerfPreset(){
     if (this.isMobile){
-      this.targetBotCount = 22;
+      this.targetBotCount = 89; // keep 89 bots even on mobile
       this.pelletTarget = 700;
       this.initialPelletCount = Math.max(100, Math.round(this.pelletTarget/6));
       this.greenMax = Math.min(this.greenMax, 12);
@@ -232,6 +238,7 @@ export class Game {
       this.mobileNoShadows = true;
       this.maxParticles = 350;
     } else {
+      this.targetBotCount = 89; // desktop also 89
       this.pelletTarget = 1000;
       this.initialPelletCount = 360;
       this.maxParticles = 900;

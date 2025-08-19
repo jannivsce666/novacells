@@ -14,7 +14,8 @@ const game = new Game(canvas);
 
 // Music
 const musicManager = new MusicManager();
-musicManager.start();
+// Do not auto-start on load to respect mobile autoplay policies; will start after first gesture or via UI
+// musicManager.start();
 
 bindInput(canvas);
 setMusicManager(musicManager);
