@@ -370,6 +370,22 @@ export class StartMenu {
     this.root.append(this.bgCanvas, card);
     document.body.appendChild(this.root);
 
+    // iOS Safari: suggest Add to Home Screen for true fullscreen once
+    try {
+      const ua = navigator.userAgent || '';
+      const isIOSSafari = /iPhone|iPad|iPod/.test(ua) && /Safari\//.test(ua) && !/CriOS|FxiOS|OPiOS/.test(ua);
+      const key = 'iosA2HSuggested';
+      const isStandalone = (navigator as any).standalone || window.matchMedia('(display-mode: standalone)').matches;
+      if (isIOSSafari && !isStandalone && !localStorage.getItem(key)){
+        const tip = document.createElement('div');
+        Object.assign(tip.style, { position:'fixed', left:'50%', bottom:'18px', transform:'translateX(-50%)', zIndex:'141', padding:'8px 12px', borderRadius:'12px', background:'rgba(0,0,0,0.70)', color:'#fff', font:'700 12px system-ui, sans-serif' } as CSSStyleDeclaration);
+        tip.textContent = 'Tipp: Über das Teilen-Menü “Zum Home-Bildschirm” für echtes Vollbild.';
+        document.body.appendChild(tip);
+        localStorage.setItem(key,'1');
+        setTimeout(()=>{ try{ tip.remove(); }catch{} }, 6000);
+      }
+    } catch {}
+
     // iPhone Chrome: ask for fullscreen and landscape once
     try {
       const ua = navigator.userAgent || '';
@@ -380,22 +396,34 @@ export class StartMenu {
         Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'140', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.55)' } as CSSStyleDeclaration);
         const card = document.createElement('div');
         Object.assign(card.style, { width:'min(420px, 94vw)', padding:'16px', borderRadius:'14px', background:'rgba(8,10,28,0.92)', color:'#fff', backdropFilter:'blur(8px)', boxShadow:'0 20px 40px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,0.06)' } as CSSStyleDeclaration);
-        const h = document.createElement('div'); h.textContent = 'Vollbild & Querformat?'; Object.assign(h.style,{ fontWeight:'900', fontSize:'18px', marginBottom:'8px' } as CSSStyleDeclaration);
-        const p = document.createElement('div'); p.textContent = 'Für das beste Erlebnis auf iPhone (Chrome) bitte Vollbild aktivieren und ins Querformat wechseln.'; Object.assign(p.style,{ opacity:'0.9', marginBottom:'12px' } as CSSStyleDeclaration);
+        const h = document.createElement('div'); h.textContent = 'Optimiertes Vollbild?'; Object.assign(h.style,{ fontWeight:'900', fontSize:'18px', marginBottom:'8px' } as CSSStyleDeclaration);
+        const p = document.createElement('div'); p.innerHTML = 'Auf iPhone in Chrome sind echte Vollbild-/Dreh-APIs eingeschränkt. Wir können ein pseudo-Vollbild aktivieren und empfehlen für echtes Vollbild: <b>In Safari öffnen</b> und "Zum Home-Bildschirm".'; Object.assign(p.style,{ opacity:'0.9', marginBottom:'12px' } as CSSStyleDeclaration);
         const row = document.createElement('div'); Object.assign(row.style,{ display:'flex', gap:'10px', justifyContent:'flex-end' } as CSSStyleDeclaration);
         const cancel = document.createElement('button'); cancel.textContent='Später'; Object.assign(cancel.style,{ padding:'8px 12px', border:'0', borderRadius:'10px', background:'#334155', color:'#fff', cursor:'pointer', fontWeight:'800' } as CSSStyleDeclaration);
-        const ok = document.createElement('button'); ok.textContent='Jetzt aktivieren'; Object.assign(ok.style,{ padding:'8px 12px', border:'0', borderRadius:'10px', background:'#34d399', color:'#052', cursor:'pointer', fontWeight:'900' } as CSSStyleDeclaration);
+        const ok = document.createElement('button'); ok.textContent='Jetzt optimieren'; Object.assign(ok.style,{ padding:'8px 12px', border:'0', borderRadius:'10px', background:'#34d399', color:'#052', cursor:'pointer', fontWeight:'900' } as CSSStyleDeclaration);
         cancel.onclick = ()=>{ localStorage.setItem(askedKey,'1'); overlay.remove(); };
         ok.onclick = async ()=>{
           localStorage.setItem(askedKey,'1');
-          // Try to lock to landscape (may be unsupported on iOS)
-          try { const o = (screen as any).orientation; if (o?.lock) await o.lock('landscape'); } catch {}
-          // Request fullscreen
+          // Pseudo-Fullscreen for iOS Chrome: use 100dvh, hide scrollbars, nudge scroll to hide URL bar.
           try {
-            const el:any = document.documentElement;
-            if (el.requestFullscreen) await el.requestFullscreen();
-            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-            else if ((document.body as any).webkitRequestFullscreen) (document.body as any).webkitRequestFullscreen();
+            const root = document.documentElement as HTMLElement;
+            Object.assign(root.style as any, { height:'100dvh' });
+            Object.assign(document.body.style as any, { height:'100dvh', overflow:'hidden', background:'#000' });
+            const gameEl = document.getElementById('game') as HTMLCanvasElement | null;
+            if (gameEl){ Object.assign(gameEl.style as any, { width:'100vw', height:'100dvh', display:'block' }); }
+            // Nudge scroll to hide chrome bars
+            const nudge = ()=>{ try{ window.scrollTo(0, 1); }catch{} };
+            nudge(); setTimeout(nudge, 50); setTimeout(nudge, 250);
+            window.addEventListener('orientationchange', ()=> setTimeout(nudge, 200));
+            window.addEventListener('resize', ()=> setTimeout(nudge, 200));
+          } catch {}
+          // One-time tip overlay about Safari/Home Screen
+          try {
+            const tip = document.createElement('div');
+            Object.assign(tip.style, { position:'fixed', left:'50%', bottom:'18px', transform:'translateX(-50%)', zIndex:'141', padding:'8px 12px', borderRadius:'12px', background:'rgba(0,0,0,0.70)', color:'#fff', font:'700 12px system-ui, sans-serif' } as CSSStyleDeclaration);
+            tip.textContent = 'Für echtes Vollbild: In Safari öffnen und \'Zum Home-Bildschirm\' hinzufügen.';
+            document.body.appendChild(tip);
+            setTimeout(()=>{ try{ tip.remove(); }catch{} }, 5000);
           } catch {}
           overlay.remove();
         };
