@@ -166,7 +166,11 @@ export class Game {
     ctx.save();
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    this.level.drawBackgroundScreen(ctx);
+    
+    // Skip background on mobile for performance
+    if (!this.simplifiedRendering) {
+      this.level.drawBackgroundScreen(ctx);
+    }
 
     // World camera
     ctx.save();
@@ -174,9 +178,11 @@ export class Game {
     ctx.scale(scale, scale);
     ctx.translate(-center.x, -center.y);
 
-    // Rainbow circle border cached by LevelDesign
+    // Rainbow circle border (skip on mobile if simplified rendering)
     const pad = this.outsidePad(elapsed);
-    this.level.drawRainbowBorder?.(ctx as any, pad, this.world as any);
+    if (!this.simplifiedRendering) {
+      this.level.drawRainbowBorder?.(ctx as any, pad, this.world as any);
+    }
 
     // Pellets
     for (const pl of this.pellets){
@@ -212,13 +218,14 @@ export class Game {
         ctx.fillStyle = gradient;
         ctx.fill();
         
-        // Accretion disk (swirling matter)
-        for (let i = 0; i < 12; i++) {
-          const angle = (i / 12) * Math.PI * 2 + time * 2;
+        // Accretion disk (swirling matter) - simplified on mobile
+        const diskParticles = this.isMobile ? 6 : 12;
+        for (let i = 0; i < diskParticles; i++) {
+          const angle = (i / diskParticles) * Math.PI * 2 + time * 2;
           const radius = eventHorizonRadius * (0.7 + Math.sin(time * 4 + i) * 0.2);
           const x = Math.cos(angle) * radius;
           const y = Math.sin(angle) * radius;
-          const size = 3 + Math.sin(time * 6 + i) * 2;
+          const size = this.isMobile ? 2 + Math.sin(time * 6 + i) * 1 : 3 + Math.sin(time * 6 + i) * 2;
           
           ctx.beginPath();
           ctx.arc(x, y, size, 0, Math.PI * 2);
@@ -232,17 +239,19 @@ export class Game {
         ctx.fillStyle = 'rgba(0, 0, 0, 1)';
         ctx.fill();
         
-        // Gravitational lensing effect (outer glow)
-        ctx.shadowColor = 'rgba(150, 80, 200, 0.8)';
-        ctx.shadowBlur = 40;
-        ctx.beginPath();
-        ctx.arc(0, 0, eventHorizonRadius * 1.2, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(150, 80, 200, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        // Gravitational lensing effect (outer glow) - skip on mobile
+        if (!this.mobileNoShadows) {
+          ctx.shadowColor = 'rgba(150, 80, 200, 0.8)';
+          ctx.shadowBlur = 40;
+          ctx.beginPath();
+          ctx.arc(0, 0, eventHorizonRadius * 1.2, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(150, 80, 200, 0.4)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
         
         // Implosion effect
-        if (vv.imploding) {
+        if (vv.imploding && !this.mobileNoShadows) {
           const implodeProgress = vv.implodeProgress || 0;
           ctx.shadowBlur = 60;
           ctx.shadowColor = 'rgba(255, 255, 255, 1)';
@@ -341,6 +350,32 @@ export class Game {
 
   step(dtMs: number, input: InputState, elapsed: number) {
     const dt = dtMs/1000;
+    
+    // Performance monitoring for mobile devices
+    if (this.isMobile) {
+      const now = performance.now();
+      if (this.lastFrameTime > 0) {
+        this.frameTime = now - this.lastFrameTime;
+        this.fpsHistory.push(1000 / this.frameTime);
+        
+        // Keep only last 60 frames for averaging
+        if (this.fpsHistory.length > 60) {
+          this.fpsHistory.shift();
+        }
+        
+        // Auto-adjust performance if FPS drops below 45 consistently
+        if (this.fpsHistory.length >= 30 && !this.performanceAdjusted) {
+          const avgFps = this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length;
+          if (avgFps < 45) {
+            this.autoAdjustPerformance();
+            this.performanceAdjusted = true;
+            console.log('🔧 Auto-adjusted performance for mobile device');
+          }
+        }
+      }
+      this.lastFrameTime = now;
+    }
+    
     const zonePad = this.outsidePad(elapsed);
     const { cx, cy, R } = zoneCircle(this.world.w, this.world.h, zonePad);
     this.lastZoneR = R;
@@ -763,8 +798,26 @@ export class Game {
     // Self merge
     for (const [, p] of this.players) if (p.alive) this.doSelfMergeForPlayer(p, dt);
 
-    // Star trail particles for invincibility
-    for (const [, p] of this.players){ if (!p.alive) continue; if (p.invincibleTimer>0){ for (const c of p.cells){ if (Math.random()<0.5){ this.particles.push({ pos:{x:c.pos.x + rand(-c.radius*0.2, c.radius*0.2), y:c.pos.y + rand(-c.radius*0.2, c.radius*0.2)}, vel:{x:rand(-40,40), y:rand(-40,40)}, life:1, size: rand(2,4), hue: randInt(0,360), type:'streak', fade: rand(0.6,1.0) }); } } } }
+    // Star trail particles for invincibility (reduced on mobile)
+    for (const [, p] of this.players){ 
+      if (!p.alive) continue; 
+      if (p.invincibleTimer>0){ 
+        for (const c of p.cells){ 
+          const particleChance = this.isMobile ? 0.15 : 0.5; // Much fewer particles on mobile
+          if (Math.random()<particleChance){ 
+            this.particles.push({ 
+              pos:{x:c.pos.x + rand(-c.radius*0.2, c.radius*0.2), y:c.pos.y + rand(-c.radius*0.2, c.radius*0.2)}, 
+              vel:{x:rand(-40,40), y:rand(-40,40)}, 
+              life:1, 
+              size: rand(2,4), 
+              hue: randInt(0,360), 
+              type:'streak', 
+              fade: rand(0.6,1.0) 
+            }); 
+          } 
+        } 
+      } 
+    }
 
     // Particles update
     this.updateParticles(dt);
@@ -916,9 +969,17 @@ export class Game {
   // Mobile perf flags and tunables
   private isMobile = false;
   private mobileNoShadows = false;
+  private reducedVisualEffects = false;
+  private simplifiedRendering = false;
+  private disableNonEssentialEffects = false;
   private pelletTarget = 1000;
   private initialPelletCount = 360;
   private maxParticles = 900;
+  // Performance monitoring for mobile
+  private frameTime = 0;
+  private lastFrameTime = 0;
+  private fpsHistory: number[] = [];
+  private performanceAdjusted = false;
   private matchTracker = newMatchTracker(); // XP tracking for current match
   private lastTrackedMass = 0; // Track mass for XP growth calculation
 
@@ -928,8 +989,17 @@ export class Game {
     const updateCanvasSize = () => {
       // Match backing store to CSS pixels to avoid Safari 100vh/URL bar issues
       const r = canvas.getBoundingClientRect();
-      const w = Math.max(1, Math.round(r.width));
-      const h = Math.max(1, Math.round(r.height));
+      let w = Math.max(1, Math.round(r.width));
+      let h = Math.max(1, Math.round(r.height));
+      
+      // On mobile, optionally reduce resolution for better performance
+      if (this.isMobile && this.simplifiedRendering) {
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const scaleFactor = devicePixelRatio > 2 ? 0.75 : 0.85; // Reduce resolution on high-DPI devices
+        w = Math.round(w * scaleFactor);
+        h = Math.round(h * scaleFactor);
+      }
+      
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
@@ -945,9 +1015,32 @@ export class Game {
 
     this.level = new LevelDesign(canvas);
 
-    // Detect mobile (coarse pointer) and apply performance preset
+    // Enhanced mobile detection and performance optimization
     try {
       this.isMobile = typeof window !== 'undefined' && !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+      
+      // Check for mobile optimization hint from start menu
+      const mobileOptLevel = sessionStorage.getItem('mobileOptimized');
+      if (mobileOptLevel === 'true') {
+        // User chose full optimization
+        this.reducedVisualEffects = true;
+        this.simplifiedRendering = true;
+        this.disableNonEssentialEffects = true;
+      } else if (mobileOptLevel === 'basic') {
+        // User chose basic optimization
+        this.reducedVisualEffects = true;
+      }
+      
+      // Detect low-end devices by checking available memory
+      if (typeof navigator !== 'undefined' && (navigator as any).deviceMemory) {
+        const deviceMemory = (navigator as any).deviceMemory;
+        if (deviceMemory <= 2) {
+          // Low memory device - enable all optimizations
+          this.reducedVisualEffects = true;
+          this.simplifiedRendering = true;
+          this.disableNonEssentialEffects = true;
+        }
+      }
     } catch { this.isMobile = false; }
     this.applyPerfPreset();
 
@@ -956,20 +1049,45 @@ export class Game {
 
   private applyPerfPreset(){
     if (this.isMobile){
-      this.targetBotCount = 69; // keep 69 bots even on mobile
-      this.pelletTarget = 700;
-      this.initialPelletCount = Math.max(100, Math.round(this.pelletTarget/6));
-      this.greenMax = Math.min(this.greenMax, 12);
-      this.redMax = Math.min(this.redMax, 3);
-      this.redBulletsPerVolley = Math.min(this.redBulletsPerVolley, 10);
-      this.auraEveryN = Math.max(this.auraEveryN, 8);
+      // Aggressive mobile optimizations for smooth 60fps
+      this.targetBotCount = 45; // Reduce bots significantly
+      this.pelletTarget = 400; // Much fewer pellets
+      this.initialPelletCount = 80;
+      this.greenMax = Math.min(this.greenMax, 6); // Fewer viruses
+      this.redMax = Math.min(this.redMax, 2);
+      this.redBulletsPerVolley = Math.min(this.redBulletsPerVolley, 6);
+      this.auraEveryN = 12; // Update auras every 12 frames instead of 5
       this.mobileNoShadows = true;
-      this.maxParticles = 350;
+      this.maxParticles = 150; // Much fewer particles
+      this.maxEatsPerFrame = 32; // Limit collision processing
+      
+      // Mobile-specific performance flags
+      this.reducedVisualEffects = true;
+      this.simplifiedRendering = true;
+      this.disableNonEssentialEffects = true;
     } else {
       this.targetBotCount = 69; // desktop also 69
       this.pelletTarget = 1000;
       this.initialPelletCount = 360;
       this.maxParticles = 900;
+    }
+  }
+
+  private autoAdjustPerformance() {
+    // Emergency performance adjustments for struggling devices
+    if (this.isMobile) {
+      this.targetBotCount = Math.max(20, this.targetBotCount - 10);
+      this.pelletTarget = Math.max(200, this.pelletTarget - 100);
+      this.maxParticles = Math.max(50, this.maxParticles - 50);
+      this.auraEveryN = Math.min(20, this.auraEveryN + 5);
+      this.greenMax = Math.max(3, this.greenMax - 2);
+      this.redMax = Math.max(1, this.redMax - 1);
+      
+      // Force all optimizations
+      this.reducedVisualEffects = true;
+      this.simplifiedRendering = true;
+      this.disableNonEssentialEffects = true;
+      this.mobileNoShadows = true;
     }
   }
 
@@ -1128,8 +1246,9 @@ export class Game {
         this.blackholeActive = false;
         console.log('🕳️ Blackhole imploded and disappeared!');
         
-        // Create implosion particles
-        for (let i = 0; i < 50; i++) {
+        // Create implosion particles (fewer on mobile)
+        const particleCount = this.isMobile ? 20 : 50;
+        for (let i = 0; i < particleCount; i++) {
           const angle = Math.random() * Math.PI * 2;
           const speed = rand(100, 300);
           this.particles.push({
@@ -1205,8 +1324,9 @@ export class Game {
     
     console.log(`🕳️ ${player.name} was consumed by blackhole! Mass halved and teleported.`);
     
-    // Create consumption particles at blackhole
-    for (let i = 0; i < 20; i++) {
+    // Create consumption particles at blackhole (fewer on mobile)
+    const particleCount = this.isMobile ? 8 : 20;
+    for (let i = 0; i < particleCount; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = rand(50, 150);
       this.particles.push({

@@ -755,24 +755,106 @@ export class StartMenu {
       if (this.mobileOverlayEl) return; // already shown
 
       const overlay = document.createElement('div');
-      Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'4000', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.85)', color:'#fff', textAlign:'center', padding:'20px' } as CSSStyleDeclaration);
-      const card = document.createElement('div'); Object.assign(card.style, { width:'min(560px, 92vw)', padding:'20px', borderRadius:'14px', background:'rgba(8,10,28,0.95)', boxShadow:'0 30px 60px rgba(0,0,0,.6)', fontFamily:'system-ui, sans-serif' } as CSSStyleDeclaration);
-      const h = document.createElement('div'); h.textContent = 'Bitte Gerät drehen'; Object.assign(h.style, { fontWeight:'900', fontSize:'20px', marginBottom:'8px' } as CSSStyleDeclaration);
-      const p = document.createElement('div'); p.innerHTML = 'Dieses Spiel ist für Landscape (Querformat) ausgelegt. Drehe dein Handy/Tablet und tippe auf "Vollbild" für das beste Erlebnis.'; Object.assign(p.style, { opacity:'0.95', marginBottom:'12px' } as CSSStyleDeclaration);
-      const row = document.createElement('div'); Object.assign(row.style, { display:'flex', gap:'10px', justifyContent:'center' } as CSSStyleDeclaration);
-      const btnFs = document.createElement('button'); btnFs.textContent = 'Vollbild & Drehen'; Object.assign(btnFs.style, { padding:'10px 14px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900', background:'#34d399', color:'#052' } as CSSStyleDeclaration);
+      Object.assign(overlay.style, { 
+        position:'fixed', 
+        inset:'0', 
+        zIndex:'4000', 
+        display:'grid', 
+        placeItems:'center', 
+        background:'rgba(0,0,0,0.85)', 
+        color:'#fff', 
+        textAlign:'center', 
+        padding:'20px',
+        backdropFilter: 'blur(10px)'
+      } as CSSStyleDeclaration);
+      
+      const card = document.createElement('div'); 
+      Object.assign(card.style, { 
+        width:'min(560px, 92vw)', 
+        padding:'20px', 
+        borderRadius:'14px', 
+        background:'rgba(8,10,28,0.95)', 
+        boxShadow:'0 30px 60px rgba(0,0,0,.6)', 
+        fontFamily:'system-ui, sans-serif',
+        border: '1px solid rgba(255,255,255,0.1)'
+      } as CSSStyleDeclaration);
+      
+      const h = document.createElement('div'); 
+      h.textContent = '📱 Querformat für beste Performance'; 
+      Object.assign(h.style, { 
+        fontWeight:'900', 
+        fontSize:'22px', 
+        marginBottom:'12px',
+        background: 'linear-gradient(90deg,#9af,#a6f,#6ff,#aff)'
+      } as CSSStyleDeclaration);
+      // Apply webkit properties separately to avoid TypeScript issues
+      (h.style as any).webkitBackgroundClip = 'text';
+      (h.style as any).webkitTextFillColor = 'transparent';
+      
+      const p = document.createElement('div'); 
+      p.innerHTML = 'Für flüssiges 60fps Gameplay drehe dein Gerät ins <strong>Querformat</strong> und aktiviere den Vollbildmodus.'; 
+      Object.assign(p.style, { 
+        opacity:'0.9', 
+        marginBottom:'16px',
+        lineHeight: '1.5'
+      } as CSSStyleDeclaration);
+      
+      const row = document.createElement('div'); 
+      Object.assign(row.style, { 
+        display:'flex', 
+        gap:'12px', 
+        justifyContent:'center',
+        flexWrap: 'wrap'
+      } as CSSStyleDeclaration);
+      
+      const btnFs = document.createElement('button'); 
+      btnFs.innerHTML = '🚀 Vollbild & Optimieren'; 
+      Object.assign(btnFs.style, { 
+        padding:'12px 16px', 
+        borderRadius:'12px', 
+        border:'0', 
+        cursor:'pointer', 
+        fontWeight:'800', 
+        background:'linear-gradient(45deg, #34d399, #10b981)', 
+        color:'#fff',
+        fontSize: '16px',
+        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+        transition: 'transform 0.2s ease'
+      } as CSSStyleDeclaration);
+      
       btnFs.onclick = async ()=>{
         try{
           const rootAny: any = document.documentElement;
-          if (rootAny.requestFullscreen) await rootAny.requestFullscreen(); else if ((rootAny as any).webkitRequestFullscreen) (rootAny as any).webkitRequestFullscreen();
+          if (rootAny.requestFullscreen) await rootAny.requestFullscreen(); 
+          else if ((rootAny as any).webkitRequestFullscreen) (rootAny as any).webkitRequestFullscreen();
+          
+          // Set mobile optimization hint
+          sessionStorage.setItem('mobileOptimized', 'true');
         }catch{}
-        // after requesting fullscreen, attempt to nudge UI to landscape (can't force rotation from JS)
+        
         setTimeout(()=>{
           if (window.innerWidth > window.innerHeight){ this.removeMobileLandscapeOverlay(); }
         }, 500);
       };
-      const btnClose = document.createElement('button'); btnClose.textContent = 'Nur Dreh-Hinweis'; Object.assign(btnClose.style, { padding:'10px 14px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900', background:'#334155', color:'#fff' } as CSSStyleDeclaration);
-      btnClose.onclick = ()=>{ /* leave overlay so user can rotate manually */ };
+      
+      const btnClose = document.createElement('button'); 
+      btnClose.innerHTML = '📱 Trotzdem spielen'; 
+      Object.assign(btnClose.style, { 
+        padding:'12px 16px', 
+        borderRadius:'12px', 
+        border:'1px solid rgba(255,255,255,0.2)', 
+        cursor:'pointer', 
+        fontWeight:'700', 
+        background:'rgba(255,255,255,0.1)', 
+        color:'#fff',
+        fontSize: '14px'
+      } as CSSStyleDeclaration);
+      
+      btnClose.onclick = ()=>{ 
+        this.removeMobileLandscapeOverlay();
+        sessionStorage.setItem('mobileOptimized', 'basic');
+      };
+      
       row.append(btnFs, btnClose);
       card.append(h, p, row);
       overlay.append(card);
