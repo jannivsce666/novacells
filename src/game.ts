@@ -140,7 +140,7 @@ export class Game {
     interceptLead: 1.2,    // lead more for interception
   } as any;
   
-  private targetBotCount = 89;
+  private targetBotCount = 69;
   private maxEatsPerFrame = 64;
   // Fixed-timestep bot AI (30 Hz)
   private botTickStep = 1/30; // ~33.3ms
@@ -228,7 +228,7 @@ export class Game {
 
   private applyPerfPreset(){
     if (this.isMobile){
-      this.targetBotCount = 89; // keep 89 bots even on mobile
+      this.targetBotCount = 69; // keep 69 bots even on mobile
       this.pelletTarget = 700;
       this.initialPelletCount = Math.max(100, Math.round(this.pelletTarget/6));
       this.greenMax = Math.min(this.greenMax, 12);
@@ -238,7 +238,7 @@ export class Game {
       this.mobileNoShadows = true;
       this.maxParticles = 350;
     } else {
-      this.targetBotCount = 89; // desktop also 89
+      this.targetBotCount = 69; // desktop also 69
       this.pelletTarget = 1000;
       this.initialPelletCount = 360;
       this.maxParticles = 900;
@@ -333,6 +333,9 @@ export class Game {
   }
 
   spawnPlayers(nBots: number, config?: PlayerConfig) {
+    // Start fresh roster to avoid duplicates across rounds
+    this.players.clear();
+
     this.me = crypto.randomUUID();
 
     const myMass = rand(50, 150);

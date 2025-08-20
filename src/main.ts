@@ -25,8 +25,9 @@ let currentSkinCanvas: HTMLCanvasElement | undefined;
 const menu = new StartMenu({
   onStart: (cfg)=>{
     currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
-    game.resetRound();
-    game.spawnPlayers(50, cfg);
+    // Start a completely fresh round; spawnPlayers clears roster and sets exact bot count
+    // game.resetRound();
+    game.spawnPlayers(69, cfg);
   },
   musicManager
 });
