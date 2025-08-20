@@ -20,7 +20,8 @@ export class ShopOverlay {
     back.onclick = ()=> this.close();
     const title = document.createElement('div'); title.textContent = 'Shop'; Object.assign(title.style,{ fontWeight:'900', fontSize:'20px' } as CSSStyleDeclaration);
     const coinsWrap = document.createElement('div'); Object.assign(coinsWrap.style, { display:'flex', alignItems:'center', gap:'8px', fontWeight:'900' } as CSSStyleDeclaration);
-    const coinIcon = document.createElement('span'); coinIcon.textContent = '🪙';
+    // Coin sprite (no emoji)
+    const coinIcon = (()=>{ const ns='http://www.w3.org/2000/svg'; const svg=document.createElementNS(ns,'svg'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('width','18'); svg.setAttribute('height','18'); const c1=document.createElementNS(ns,'circle'); c1.setAttribute('cx','12'); c1.setAttribute('cy','12'); c1.setAttribute('r','9'); c1.setAttribute('fill','#ffd54a'); const c2=document.createElementNS(ns,'circle'); c2.setAttribute('cx','12'); c2.setAttribute('cy','12'); c2.setAttribute('r','7'); c2.setAttribute('fill','#ffe17a'); const line=document.createElementNS(ns,'rect'); line.setAttribute('x','8'); line.setAttribute('y','11'); line.setAttribute('width','8'); line.setAttribute('height','2'); line.setAttribute('rx','1'); line.setAttribute('fill','#b88b09'); svg.append(c1,c2,line); return svg; })();
     const coins = document.createElement('span'); coins.textContent = '0'; this.coinsEl = coins;
     coinsWrap.append(coinIcon, coins);
     header.append(back, title, coinsWrap);
@@ -81,24 +82,37 @@ export class ShopOverlay {
       const name = document.createElement('div'); name.textContent = skinId; Object.assign(name.style,{ fontWeight:'900', margin:'8px 0 6px' } as CSSStyleDeclaration);
       const buy = document.createElement('button');
       const ownedNow = !!owned[skinId];
-      buy.textContent = ownedNow ? 'Besitzt' : `Kaufen (${cost}🪙)`;
-      Object.assign(buy.style,{ width:'100%', padding:'10px 12px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900', background: ownedNow ? '#10b981' : '#fbbf24', color: ownedNow ? '#052' : '#111' } as CSSStyleDeclaration);
-      buy.disabled = ownedNow;
+      Object.assign(buy.style,{ width:'100%', padding:'10px 12px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900' } as CSSStyleDeclaration);
+      const setBuyLabel = (isOwned:boolean)=>{
+        buy.replaceChildren();
+        if (isOwned){
+          buy.textContent = 'Besitzt';
+          buy.style.background = '#10b981'; buy.style.color = '#052';
+          buy.disabled = true;
+        } else {
+          buy.style.background = '#fbbf24'; buy.style.color = '#111';
+          buy.disabled = false;
+          const ns='http://www.w3.org/2000/svg';
+          const svg=document.createElementNS(ns,'svg'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('width','16'); svg.setAttribute('height','16'); const c1=document.createElementNS(ns,'circle'); c1.setAttribute('cx','12'); c1.setAttribute('cy','12'); c1.setAttribute('r','9'); c1.setAttribute('fill','#ffd54a'); const c2=document.createElementNS(ns,'circle'); c2.setAttribute('cx','12'); c2.setAttribute('cy','12'); c2.setAttribute('r','7'); c2.setAttribute('fill','#ffe17a'); const line=document.createElementNS(ns,'rect'); line.setAttribute('x','8'); line.setAttribute('y','11'); line.setAttribute('width','8'); line.setAttribute('height','2'); line.setAttribute('rx','1'); line.setAttribute('fill','#b88b09'); svg.append(c1,c2,line);
+          const label = document.createElement('span'); label.textContent = `Kaufen (${cost})`;
+          label.style.marginRight = '8px';
+          buy.append(label, svg);
+        }
+      };
+      setBuyLabel(ownedNow);
       buy.onclick = async ()=>{
         if (!this.uid){ alert('Bitte mit Google anmelden.'); return; }
         buy.disabled = true;
         const res = await purchaseSkin(this.uid, skinId, cost);
         if (res.ok){
           this.setCoins(res.coins);
-          // notify global listeners about new balance
           try { window.dispatchEvent(new CustomEvent('coins-updated', { detail: res.coins })); } catch {}
-          buy.textContent = 'Besitzt'; buy.style.background = '#10b981'; buy.style.color = '#052';
+          setBuyLabel(true);
         }
         else {
-          if (res.reason === 'already-owned'){ buy.textContent = 'Besitzt'; }
-          else if (res.reason === 'insufficient-coins'){ alert('Nicht genug Coins.'); buy.disabled = false; }
-          else { alert('Fehler beim Kauf.'); buy.disabled = false; }
-          // if backend returned coins, still reflect it
+          if (res.reason === 'already-owned'){ setBuyLabel(true); }
+          else if (res.reason === 'insufficient-coins'){ alert('Nicht genug Coins.'); setBuyLabel(false); }
+          else { alert('Fehler beim Kauf.'); setBuyLabel(false); }
           const c = (res as any)?.coins; if (typeof c === 'number' && Number.isFinite(c)){
             this.setCoins(c);
             try { window.dispatchEvent(new CustomEvent('coins-updated', { detail: c })); } catch {}

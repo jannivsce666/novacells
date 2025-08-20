@@ -2,7 +2,7 @@
 import type { PlayerState, PowerUp, PowerUpType, Virus } from './types';
 import { rand, randInt } from './utils';
 
-export const POWERUP_TYPES: PowerUpType[] = ['star','multishot','grow','magnet'];
+export const POWERUP_TYPES: PowerUpType[] = ['star','multishot','grow','magnet','lightning'];
 
 function zoneCircle(worldW:number, worldH:number, pad:number){
   const cx = worldW/2, cy = worldH/2; const R = Math.max(0, Math.min(worldW, worldH)/2 - pad);
@@ -19,9 +19,9 @@ export function spawnPowerUps(worldW:number, worldH:number, count:number, pad:nu
   const greens = viruses.filter(v => (v as any).kind === 'green');
 
   for(let i=0;i<count;i++){
-    // Order: ['star','multishot','grow','magnet']
-    // Reduce star chance from 0.35 to 0.10 (others rebalanced)
-    const type = weightedPick([0.10, 0.40, 0.30, 0.20], POWERUP_TYPES);
+    // Order: ['star','multishot','grow','magnet','lightning']
+    // lightning same as multishot (35%), reduce star to 5%
+    const type = weightedPick([0.05, 0.35, 0.25, 0.20, 0.35], POWERUP_TYPES);
     let x:number, y:number;
     if (type === 'multishot' && greens.length>0){
       const v = greens[Math.floor(Math.random()*greens.length)];
@@ -86,6 +86,33 @@ export function drawPowerUp(ctx:CanvasRenderingContext2D, pu:PowerUp){
     // field lines shimmer
     ctx.strokeStyle = `rgba(255,255,255,${0.6 + 0.3*Math.sin(t)})`;
     ctx.beginPath(); ctx.moveTo(6,-8); ctx.lineTo(12,-10); ctx.moveTo(6,8); ctx.lineTo(12,10); ctx.stroke();
+  } else if (pu.type==='lightning'){
+    // lightning bolt icon with electric shimmer
+    const t = performance.now()/300;
+    ctx.strokeStyle = `rgba(255,255,0,${0.9 + 0.1*Math.sin(t*4)})`;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-8, -12);
+    ctx.lineTo(2, -2);
+    ctx.lineTo(-4, -2);
+    ctx.lineTo(8, 12);
+    ctx.lineTo(-2, 2);
+    ctx.lineTo(4, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // electric sparks
+    ctx.fillStyle = `rgba(255,255,255,${0.7 + 0.3*Math.sin(t*6)})`;
+    for(let i=0; i<3; i++){
+      const angle = (t*2 + i*2.1) % (Math.PI*2);
+      const x = Math.cos(angle) * 16;
+      const y = Math.sin(angle) * 16;
+      ctx.beginPath();
+      ctx.arc(x, y, 1, 0, Math.PI*2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
@@ -101,5 +128,11 @@ export function applyPowerUp(p:PlayerState, cIdx:number, pu:PowerUp){
     p.multishotTimer = Math.max(p.multishotTimer, 14.0);
   } else if (pu.type==='magnet'){
     p.magnetTimer = Math.max(p.magnetTimer || 0, 15.0);
+  } else if (pu.type==='lightning'){
+    // Only apply lightning if not already active and not invincible
+    if ((p.lightningTimer || 0) <= 0 && p.invincibleTimer <= 0) {
+      p.lightningTimer = 30.0;
+      p.lightningMassDrainTimer = 0; // reset drain timer
+    }
   }
 }

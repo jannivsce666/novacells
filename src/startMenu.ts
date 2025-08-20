@@ -6,6 +6,7 @@ import { FIXED_PRESET_COMBOS } from './skins';
 import { MusicManager } from './musicManager';
 import { LevelDesign } from './LevelDesign';
 import { auth, googleProvider, signInWithPopup, onAuthStateChanged } from './firebase';
+import { getUiProgress, getState, setHooks } from './xp';
 
 export type StartMenuOptions = {
   onStart: (cfg: PlayerConfig)=>void;
@@ -24,23 +25,27 @@ export class StartMenu {
   private nameInput: HTMLInputElement;
   private preview!: HTMLCanvasElement; // hidden offscreen preview for skin rendering
   private currentSkinCanvas!: HTMLCanvasElement;
+  private skinThumb?: HTMLCanvasElement;
   // New refs for responsive layout
   private card!: HTMLDivElement;
   private gridEl!: HTMLDivElement;
   private paletteEl!: HTMLDivElement;
   private titleEl!: HTMLHeadingElement;
+  private titleTextEl!: HTMLSpanElement;
+  private nameWrapEl!: HTMLDivElement;
   private startBtn!: HTMLButtonElement;
   private musicBtn?: HTMLButtonElement;
   private fsBtn?: HTMLButtonElement;
   private presetThumbs: HTMLCanvasElement[] = [];
   private coinEl?: HTMLDivElement;
+  private userBadgeCanvas?: HTMLCanvasElement;
 
   constructor(private opts: StartMenuOptions){
     // Overlay root
     this.root = document.createElement('div');
     this.root.id = 'start-menu';
     Object.assign(this.root.style, {
-      position:'fixed', inset:'0', zIndex:'100', display:'grid', placeItems:'center',
+      position:'fixed', inset:'0', zIndex:'2000', display:'grid', placeItems:'center',
       background:'transparent'
     } as CSSStyleDeclaration);
 
@@ -68,29 +73,29 @@ export class StartMenu {
     } as CSSStyleDeclaration);
     this.card = card;
 
-    // Music toggle button (top-right) -> speaker icons only
+    // Music toggle button (SVG sprite)
     const musicBtn = document.createElement('button');
     const musicPlaying = this.opts.musicManager?.isCurrentlyPlaying();
-    musicBtn.textContent = musicPlaying ? '🔊' : '🔈';
     Object.assign(musicBtn.style, {
-      position:'absolute', top:'14px', right:'66px', width:'40px', height:'40px', borderRadius:'50%',
+      position:'absolute', top:'14px', left:'14px', right:'auto', width:'40px', height:'40px', borderRadius:'50%',
       border:'0', background:'rgba(255,255,255,0.10)', color:'#fff', cursor:'pointer',
-      display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px'
+      display:'grid', placeItems:'center', zIndex:'2'
     } as CSSStyleDeclaration);
-    musicBtn.onclick = ()=>{
-      this.opts.musicManager?.toggle();
-      musicBtn.textContent = this.opts.musicManager?.isCurrentlyPlaying() ? '🔊' : '🔈';
+    const setMusicIcon = ()=>{
+      musicBtn.replaceChildren(makeSprite(this.opts.musicManager?.isCurrentlyPlaying() ? 'volume-on' : 'volume-off'));
     };
+    setMusicIcon();
+    musicBtn.onclick = ()=>{ this.opts.musicManager?.toggle(); setMusicIcon(); };
     this.musicBtn = musicBtn;
 
-    // Fullscreen button (top-right, next to music)
+    // Fullscreen button (SVG sprite)
     const fsBtn = document.createElement('button');
-    fsBtn.textContent = '⛶';
     Object.assign(fsBtn.style, {
-      position:'absolute', top:'12px', right:'14px', width:'40px', height:'40px', borderRadius:'50%',
+      position:'absolute', top:'14px', left:'66px', right:'auto', width:'40px', height:'40px', borderRadius:'50%',
       border:'0', background:'rgba(255,255,255,0.10)', color:'#fff', cursor:'pointer',
-      display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px'
+      display:'grid', placeItems:'center', zIndex:'2'
     } as CSSStyleDeclaration);
+    fsBtn.appendChild(makeSprite('fullscreen'));
     const docAny: any = document; const rootAny: any = document.documentElement;
     const isFull = () => !!(document.fullscreenElement || docAny.webkitFullscreenElement || docAny.msFullscreenElement);
     const enterFull = async ()=>{ try{ if(rootAny.requestFullscreen) await rootAny.requestFullscreen(); else if (rootAny.webkitRequestFullscreen) rootAny.webkitRequestFullscreen(); else if (rootAny.msRequestFullscreen) rootAny.msRequestFullscreen(); }catch{} };
@@ -102,15 +107,15 @@ export class StartMenu {
     document.addEventListener('msfullscreenchange' as any, updateFs as any);
     this.fsBtn = fsBtn;
 
-    // Coin display (next to music button, with enough spacing)
+    // Coin display (SVG sprite)
     const coin = document.createElement('div');
     Object.assign(coin.style, {
-      position:'absolute', top:'14px', right:'120px', padding:'8px 12px',
+      position:'absolute', top:'14px', right:'14px', padding:'8px 12px',
       borderRadius:'999px', background:'rgba(255,255,255,0.10)', color:'#fff',
       display:'flex', alignItems:'center', gap:'8px', font:'700 14px system-ui, sans-serif',
       zIndex: '2', boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.08)'
     } as CSSStyleDeclaration);
-    const coinIcon = document.createElement('span'); coinIcon.textContent = '🪙';
+    const coinIcon = makeSprite('coin');
     const coinCount = document.createElement('span'); coinCount.textContent = String(this.getCoins());
     coin.append(coinIcon, coinCount);
     this.coinEl = coin;
@@ -123,166 +128,274 @@ export class StartMenu {
     // Left column: form
     const form = document.createElement('div');
     const title = document.createElement('h1');
-    title.textContent = 'novacells.space';
-    Object.assign(title.style,{margin:'0 0 14px', letterSpacing:'2px', fontWeight:'900', fontSize:'40px', textAlign:'center',
-      background:'linear-gradient(90deg,#9af,#a6f,#6ff,#aff)', WebkitBackgroundClip:'text', color:'transparent'} as unknown as CSSStyleDeclaration);
+    const titleText = document.createElement('span');
+    titleText.textContent = 'novacells.space';
+    // Base visible style (fallback)
+    Object.assign(titleText.style, { display:'inline-block', color:'#fff' } as unknown as CSSStyleDeclaration);
+    // Robust gradient text with safe fallback
+    try {
+      const hasCSS = (window as any).CSS && typeof (CSS as any).supports === 'function';
+      const canClip = hasCSS && ((CSS as any).supports('background-clip', 'text') || (CSS as any).supports('-webkit-background-clip', 'text'));
+      if (canClip) {
+        titleText.style.background = 'linear-gradient(90deg,#9af,#a6f,#6ff,#aff)';
+        (titleText.style as any).webkitBackgroundClip = 'text';
+        titleText.style.backgroundClip = 'text';
+        (titleText.style as any).webkitTextFillColor = 'transparent';
+        titleText.style.color = 'transparent';
+      } else {
+        // ensure it stays visible if clip not supported
+        (titleText.style as any).webkitBackgroundClip = '';
+        (titleText.style as any).webkitTextFillColor = '';
+        titleText.style.background = '';
+        titleText.style.color = '#fff';
+      }
+    } catch {}
+    title.appendChild(titleText);
+    // Ensure title styling is applied and references are set (fix corrupted block)
+    Object.assign(title.style, {
+      margin: '0 0 14px',
+      letterSpacing: '2px',
+      fontWeight: '900',
+      fontSize: '40px',
+      textAlign: 'center'
+    } as CSSStyleDeclaration);
     this.titleEl = title as HTMLHeadingElement;
+    this.titleTextEl = titleText;
 
+    // Name input field
     this.nameInput = document.createElement('input');
-    this.nameInput.placeholder = 'Name...';
-    this.nameInput.maxLength = 12;
-    Object.assign(this.nameInput.style,{
-      flex:'1 1 auto', padding:'12px 16px', borderRadius:'999px', border:'0', outline:'none',
+    Object.assign(this.nameInput.style, {
+      flex:'0 0 auto', width:'100%', padding:'12px 16px', borderRadius:'999px', border:'0', outline:'none',
       background:'rgba(255,255,255,0.10)', color:'#fff', fontWeight:'800', fontSize:'16px',
       boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.08)'
     } as CSSStyleDeclaration);
 
-    // Skins bubble button (opens gallery)
-    const skinsBtn = document.createElement('button');
-    skinsBtn.textContent = 'Skins';
-    Object.assign(skinsBtn.style, {
-      flex:'0 0 auto', padding:'8px 12px', borderRadius:'999px', border:'0',
-      background:'rgba(255,255,255,0.14)', color:'#fff', fontWeight:'800', cursor:'pointer',
-      marginRight:'8px', fontSize:'14px'
-    } as CSSStyleDeclaration);
-    skinsBtn.onclick = ()=>{
-      import('./skinsGallery').then(({ SkinsGallery })=>{
-        new SkinsGallery({
-          current: this.currentSkinCanvas,
-          onPick: (skin)=>{ this.currentSkinCanvas = skin; this.updatePreview(); },
-          onClose: ()=>{}
-        });
-      });
+    // Hidden start trigger button
+    this.startBtn = document.createElement('button');
+    this.startBtn.type = 'button';
+    Object.assign(this.startBtn.style, { display:'none' } as CSSStyleDeclaration);
+    this.startBtn.onclick = ()=>{
+      try {
+        const name = (this.nameInput.value || '').trim() || 'Player';
+        this.hide();
+        this.opts.onStart({ name, skinCanvas: this.currentSkinCanvas } as any);
+      } catch {}
     };
+    // Allow Enter key to start
+    this.nameInput.addEventListener('keydown', (e: KeyboardEvent)=>{
+      if (e.key === 'Enter') { e.preventDefault(); this.startBtn.click(); }
+    });
+
+    // Skins circular button (opens gallery)
+    const skinsBtn = document.createElement('button');
+    Object.assign(skinsBtn.style, {
+      position:'absolute', left:'-50px', top:'50%', transform:'translateY(-50%)',
+      width:'44px', height:'44px', padding:'0', borderRadius:'50%', border:'0',
+      background:'rgba(255, 255, 255, 0.15)', cursor:'pointer', display:'grid', placeItems:'center',
+      zIndex: '10',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+    } as CSSStyleDeclaration);
+    // Circular skin thumbnail (shows currently selected skin)
+    const skinThumb = document.createElement('canvas'); skinThumb.width = 44; skinThumb.height = 44;
+    Object.assign(skinThumb.style, { width:'44px', height:'44px', borderRadius:'50%', display:'block', background:'#0b0f12', boxShadow:'inset 0 0 0 2px rgba(255,255,255,0.18)' } as CSSStyleDeclaration);
+    this.skinThumb = skinThumb;
+    skinsBtn.title = 'Skins';
+    skinsBtn.setAttribute('aria-label','Skins');
+    skinsBtn.append(skinThumb);
+    
+    // Sofortiger Event-Handler mit setTimeout zur sicheren Ausführung
+    skinsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('🎨 Skin button clicked! Event triggered immediately');
+      setTimeout(() => {
+        import('./skinsGallery').then(({ SkinsGallery })=>{
+          console.log('SkinsGallery imported successfully');
+          new SkinsGallery({
+            current: this.currentSkinCanvas,
+            onPick: (skinCanvas)=>{ 
+              this.currentSkinCanvas = skinCanvas; 
+              this.updatePreview(); 
+              this.updateSkinThumb(); 
+            },
+            onClose: ()=>{}
+          });
+          // Ensure the newly added overlay is displayed above the start menu
+          try { this.bringLastOverlayToFront(); } catch (err) { /* ignore */ }
+        }).catch(error => {
+          console.error('Failed to import SkinsGallery:', error);
+        });
+      }, 0);
+    });
     ;(this as any).skinsBtn = skinsBtn;
 
-    // Name row
-    const nameRow = document.createElement('div');
-    Object.assign(nameRow.style, { display:'flex', alignItems:'center', justifyContent:'center', gap:'8px' } as CSSStyleDeclaration);
-    nameRow.append(skinsBtn, this.nameInput);
+    // Name row wrapper centered under title, input centered; skins button sits to the left
+    const nameWrap = document.createElement('div');
+    Object.assign(nameWrap.style, { 
+      position:'relative', 
+      width:'min(320px, 72vw)', 
+      margin:'0',
+      overflow: 'visible' // Ensure button isn't clipped
+    } as CSSStyleDeclaration);
+    nameWrap.append(this.nameInput, skinsBtn);
+    this.nameWrapEl = nameWrap;
 
-    // Modes row (Classic only)
+    // Modes row: Start + Placeholder + Shop + Gifts (centered under name)
     const modesRow = document.createElement('div');
-    Object.assign(modesRow.style, { display:'grid', gridTemplateColumns:'1fr', gap:'12px', width:'min(520px, 92%)', margin:'0 auto' } as CSSStyleDeclaration);
+    Object.assign(modesRow.style, {
+      display:'grid', gridTemplateColumns:'auto auto auto auto', gap:'10px',
+      width:'auto', margin:'8px auto 0', justifyContent:'center'
+    } as CSSStyleDeclaration);
 
-    // SVG icon factory (no emojis)
-    const ns = 'http://www.w3.org/2000/svg';
-    const makeIcon = (kind: 'play' | 'rush') => {
-      const svg = document.createElementNS(ns, 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('width', '22');
-      svg.setAttribute('height', '22');
-      if (kind === 'play') {
-        const poly = document.createElementNS(ns, 'polygon');
-        poly.setAttribute('points', '6,4 20,12 6,20');
-        poly.setAttribute('fill', '#0b0f12');
-        poly.setAttribute('opacity', '0.95');
-        svg.appendChild(poly);
-      } else if (kind === 'rush') {
-        const circle = document.createElementNS(ns, 'circle');
-        circle.setAttribute('cx', '12'); circle.setAttribute('cy', '12'); circle.setAttribute('r', '7.5');
-        circle.setAttribute('fill', 'none'); circle.setAttribute('stroke', '#0b0f12'); circle.setAttribute('stroke-width', '2');
-        const hand1 = document.createElementNS(ns, 'line');
-        hand1.setAttribute('x1', '12'); hand1.setAttribute('y1', '12'); hand1.setAttribute('x2', '12'); hand1.setAttribute('y2', '7');
-        hand1.setAttribute('stroke', '#0b0f12'); hand1.setAttribute('stroke-width', '2'); hand1.setAttribute('stroke-linecap', 'round');
-        const hand2 = document.createElementNS(ns, 'line');
-        hand2.setAttribute('x1', '12'); hand2.setAttribute('y1', '12'); hand2.setAttribute('x2', '16'); hand2.setAttribute('y2', '13');
-        hand2.setAttribute('stroke', '#0b0f12'); hand2.setAttribute('stroke-width', '2'); hand2.setAttribute('stroke-linecap', 'round');
-        const crown = document.createElementNS(ns, 'rect');
-        crown.setAttribute('x', '10'); crown.setAttribute('y', '1.5'); crown.setAttribute('width', '4'); crown.setAttribute('height', '3'); crown.setAttribute('rx', '0.8');
-        crown.setAttribute('fill', '#0b0f12'); crown.setAttribute('opacity', '0.95');
-        svg.append(circle, hand1, hand2, crown);
-      }
-      return svg;
-    };
+    const startBtnVis = document.createElement('button');
+    Object.assign(startBtnVis.style, {
+      width:'56px', height:'56px', padding:'0', border:'0', borderRadius:'50%',
+      background:'linear-gradient(145deg, #ffcc4d, #ffa63b)', color:'#0b0f12', cursor:'pointer',
+      boxShadow:'0 10px 20px #ffa63b44, 0 2px 0 #ffcc4d44', display:'grid', placeItems:'center'
+    } as CSSStyleDeclaration);
+    { 
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns,'svg');
+      svg.setAttribute('viewBox','0 0 24 24');
+      svg.setAttribute('width','22');
+      svg.setAttribute('height','22');
+      const tri = document.createElementNS(ns,'polygon');
+      tri.setAttribute('points','7,5 19,12 7,19');
+      tri.setAttribute('fill','#0b0f12');
+      svg.appendChild(tri);
+      // Append the play icon to the Start button (was missing)
+      startBtnVis.appendChild(svg);
+    }
+    startBtnVis.title = 'Start';
+    startBtnVis.onclick = ()=>{ this.startBtn.click(); };
 
-    // Helper to decorate game buttons with neon sprites (SVG icons)
-    const decorateBtn = (btn: HTMLButtonElement, label: string, variant: 'play'|'rush', from: string, to: string)=>{
-      btn.innerHTML = '';
-      Object.assign(btn.style, {
-        position:'relative', display:'flex', alignItems:'center', justifyContent:'center', gap:'10px',
-        padding:'18px 22px 18px 68px', border:'0', borderRadius:'16px', fontWeight:'900', fontSize:'18px',
-        background:`linear-gradient(100deg, ${from}, ${to})`, color:'#0b0f12', cursor:'pointer',
-        boxShadow:`0 10px 24px ${from}44, 0 2px 0 ${to}44`, overflow:'hidden',
-        transform:'translateZ(0)'
-      } as CSSStyleDeclaration);
-      btn.onmouseenter = ()=>{ btn.style.filter = 'brightness(1.06)'; btn.style.transform = 'translateZ(0) scale(1.02)'; };
-      btn.onmouseleave = ()=>{ btn.style.filter = 'none'; btn.style.transform = 'translateZ(0) scale(1.0)'; };
-      // Icon bubble (sprite container)
-      const ico = document.createElement('span');
-      Object.assign(ico.style, {
-        position:'absolute', left:'14px', top:'50%', transform:'translateY(-50%)',
-        width:'44px', height:'44px', borderRadius:'12px', display:'grid', placeItems:'center',
-        background:`radial-gradient(60% 60% at 30% 30%, #ffffffaa, #ffffff44 60%, transparent 70%), linear-gradient(145deg, ${to}, ${from})`,
-        boxShadow:`0 8px 18px ${to}55, inset 0 0 0 1px #ffffff55`
-      } as CSSStyleDeclaration);
-      // Insert SVG icon
-      const svgIcon = makeIcon(variant);
-      ico.appendChild(svgIcon);
-      // Shine sprite
-      const shine = document.createElement('span');
-      Object.assign(shine.style, {
-        position:'absolute', right:'-28px', top:'-28px', width:'120px', height:'120px', borderRadius:'50%',
-        background:'radial-gradient(closest-side, rgba(255,255,255,0.45), rgba(255,255,255,0) 70%)',
-        pointerEvents:'none', filter:'blur(1px)'
-      } as CSSStyleDeclaration);
-      // Bottom neon underline
-      const underline = document.createElement('span');
-      Object.assign(underline.style, {
-        position:'absolute', left:'0', right:'0', bottom:'0', height:'3px',
-        background:`linear-gradient(90deg, ${from}, ${to})`, opacity:'0.9'
-      } as CSSStyleDeclaration);
-      // Label
-      const lbl = document.createElement('span');
-      lbl.textContent = label;
-      Object.assign(lbl.style, { letterSpacing:'0.3px', textShadow:'0 1px 0 rgba(255,255,255,0.35)' } as CSSStyleDeclaration);
+    const placeholderBtn = document.createElement('button');
+    Object.assign(placeholderBtn.style, {
+      width:'56px', height:'56px', padding:'0', border:'0', borderRadius:'50%',
+      background:'linear-gradient(145deg, #e5e7eb, #d1d5db)', color:'#0b0f12', cursor:'not-allowed',
+      boxShadow:'0 10px 18px #9ca3af33, 0 2px 0 #e5e7eb66', display:'grid', placeItems:'center', opacity:'0.9'
+    } as CSSStyleDeclaration);
+    { const ns = 'http://www.w3.org/2000/svg'; const svg = document.createElementNS(ns,'svg'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('width','20'); svg.setAttribute('height','20'); const circ = document.createElementNS(ns,'circle'); circ.setAttribute('cx','12'); circ.setAttribute('cy','12'); circ.setAttribute('r','8'); circ.setAttribute('fill','none'); circ.setAttribute('stroke','#0b0f12'); circ.setAttribute('stroke-width','2'); const hand = document.createElementNS(ns,'line'); hand.setAttribute('x1','12'); hand.setAttribute('y1','12'); hand.setAttribute('x2','16'); hand.setAttribute('y2','13'); hand.setAttribute('stroke','#0b0f12'); hand.setAttribute('stroke-width','2'); hand.setAttribute('stroke-linecap','round'); svg.append(circ, hand); placeholderBtn.appendChild(svg); }
+    placeholderBtn.title = 'Bald';
 
-      btn.append(ico, lbl, shine, underline);
-    };
+    // Shop small button (next to Start)
+    const shopSmall = document.createElement('button');
+    Object.assign(shopSmall.style, {
+      width:'56px', height:'56px', padding:'0', border:'0', borderRadius:'50%',
+      background:'#34d399', color:'#052', cursor:'pointer', display:'grid', placeItems:'center',
+      boxShadow:'0 10px 18px rgba(52,211,153,.25)'
+    } as CSSStyleDeclaration);
+    shopSmall.title = 'Shop';
+    shopSmall.appendChild(makeSprite('cart'));
+    
+    // Sofortiger Event-Handler mit setTimeout zur sicheren Ausführung
+    shopSmall.addEventListener('click', (e) => {
+      e.preventDefault(); 
+      e.stopPropagation();
+      console.log('🛒 Shop button clicked! Event triggered immediately');
+      setTimeout(() => {
+        import('./shop').then(({ ShopOverlay })=>{ 
+          console.log('Shop module imported successfully');
+          try{ 
+            new ShopOverlay(); 
+            // Put overlay above start menu
+            try { this.bringLastOverlayToFront(); } catch (err) { /* ignore */ }
+          }catch(e){ 
+            console.warn('Shop open failed', e);
+          } 
+        }).catch(error => {
+          console.error('Failed to import shop module:', error);
+        });
+      }, 0);
+    });
 
-    const btnClassic = document.createElement('button');
-    decorateBtn(btnClassic, 'Classic', 'play', '#ffa63b', '#ffcc4d');
-    Object.assign(btnClassic.style, { marginTop: '20px' } as CSSStyleDeclaration);
-    btnClassic.onclick = ()=>{ this.startBtn.click(); };
+    // Gifts small button (to the right)
+    const giftsSmall = document.createElement('button');
+    Object.assign(giftsSmall.style, {
+      width:'56px', height:'56px', padding:'0', border:'0', borderRadius:'50%',
+      background:'#60a5fa', color:'#052', cursor:'pointer', display:'grid', placeItems:'center',
+      boxShadow:'0 10px 18px rgba(96,165,250,.25)'
+    } as CSSStyleDeclaration);
+    giftsSmall.title = 'Gifts';
+    giftsSmall.appendChild(makeSprite('gift'));
 
-    modesRow.append(btnClassic);
+    modesRow.append(startBtnVis, placeholderBtn, shopSmall, giftsSmall);
     ;(this as any).modesRow = modesRow;
 
-    // Palette placeholder (gallery handles selection)
-    const palette = document.createElement('div');
-    Object.assign(palette.style, { display:'none' } as CSSStyleDeclaration);
-    this.paletteEl = palette;
+    // Centered XP + Account under textbox
+    const midInfo = document.createElement('div');
+    Object.assign(midInfo.style, { display:'grid', gap:'8px', justifyItems:'center', margin:'8px auto 0' } as CSSStyleDeclaration);
+    ;(this as any).midInfo = midInfo;
 
-    // Hidden preview/right column
-    const right = document.createElement('div'); right.style.display = 'none';
-    this.preview = document.createElement('canvas'); this.preview.width = 200; this.preview.height = 200; this.preview.style.display='none'; right.appendChild(this.preview);
-
-    // Start button (hidden; triggered by game mode buttons)
-    const startBtn = document.createElement('button'); startBtn.textContent = 'SPIEL STARTEN';
-    Object.assign(startBtn.style, { position:'absolute', left:'-9999px', top:'-9999px' } as CSSStyleDeclaration);
-    this.startBtn = startBtn;
-    startBtn.onclick = ()=>{
-      const cfg: PlayerConfig = { name: this.nameInput.value || 'You', color: '#5cf2a6', skinCanvas: this.currentSkinCanvas } as any;
-      this.opts.onStart(cfg);
-      this.hide();
+    // XP bar + Level label
+    const xpWrap = document.createElement('div'); Object.assign(xpWrap.style,{ width:'240px', height:'14px', borderRadius:'999px', background:'rgba(255,255,255,0.15)', boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.10)' } as CSSStyleDeclaration);
+    const xpFill = document.createElement('div'); Object.assign(xpFill.style,{ width:'0%', height:'100%', borderRadius:'999px', background:'linear-gradient(90deg,#a78bfa,#60a5fa)', boxShadow:'0 6px 14px rgba(96,165,250,0.35)', transition:'width .25s ease' } as CSSStyleDeclaration);
+    xpWrap.appendChild(xpFill);
+    const lvlBadge = document.createElement('div');
+    Object.assign(lvlBadge.style, { padding:'2px 8px', borderRadius:'999px', background:'rgba(255,255,255,0.14)', boxShadow:'inset 0 0 0 1px rgba(255,255,255,0.10)', font:'800 12px system-ui', letterSpacing:'0.2px', color:'#fff' } as CSSStyleDeclaration);
+    lvlBadge.textContent = 'Level 1';
+    const xpRow = document.createElement('div');
+    Object.assign(xpRow.style, { display:'flex', alignItems:'center', gap:'8px' } as CSSStyleDeclaration);
+    xpRow.append(xpWrap, lvlBadge);
+    ;(this as any).setXP = (current:number, max:number, level?:number)=>{
+      const pct = Math.max(0, Math.min(1, max ? current/max : 0));
+      xpFill.style.width = `${Math.round(pct*100)}%`;
+      if (typeof level === 'number') lvlBadge.textContent = `Level ${Math.max(1, Math.floor(level))}`;
     };
 
-    // Assemble (compact)
-    form.append(title, nameRow, modesRow /*, palette*/);
-    grid.append(form, right);
+    // Account row (Google name / abmelden) with skin avatar
+    const accountRow = document.createElement('div'); Object.assign(accountRow.style,{ display:'flex', alignItems:'center', gap:'8px' } as CSSStyleDeclaration);
+    const userBadge = document.createElement('canvas'); userBadge.width = 28; userBadge.height = 28; Object.assign(userBadge.style,{ width:'28px', height:'28px', borderRadius:'50%', display:'block', background:'#0b0f12', boxShadow:'inset 0 0 0 2px rgba(255,255,255,0.18)' } as CSSStyleDeclaration);
+    this.userBadgeCanvas = userBadge;
+    const userName = document.createElement('div'); Object.assign(userName.style,{ maxWidth:'220px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', font:'800 14px system-ui' } as CSSStyleDeclaration); userName.textContent = '';
+    const signInBtn = document.createElement('button'); Object.assign(signInBtn.style,{ padding:'8px 12px', borderRadius:'999px', background:'rgba(255,255,255,0.92)', color:'#123', fontWeight:'900', border:'0', cursor:'pointer' } as CSSStyleDeclaration); signInBtn.textContent='Mit Google anmelden';
+    const signoutBtn = document.createElement('button'); signoutBtn.textContent = 'Abmelden'; Object.assign(signoutBtn.style, { padding:'8px 12px', borderRadius:'999px', background:'rgba(255,255,255,0.92)', color:'#123', fontWeight:'900', border:'0', cursor:'pointer', display:'none' } as CSSStyleDeclaration);
+    const setUser = (name?:string)=>{ if (name) { userName.textContent = name; accountRow.replaceChildren(userBadge, userName, signoutBtn); signInBtn.style.display = 'none'; signoutBtn.style.display = 'inline-block'; } else { userName.textContent = ''; accountRow.replaceChildren(userBadge, signInBtn); signInBtn.style.display = 'inline-block'; signoutBtn.style.display = 'none'; } };
+    signInBtn.onclick = async ()=>{ const { auth, googleProvider, signInWithPopup } = await import('./firebase'); try{ await signInWithPopup(auth, googleProvider); }catch(e){ console.warn('Google sign-in failed', e); } };
+    signoutBtn.onclick = async ()=>{ try{ const { auth, signOut } = await import('./firebase'); await signOut(auth); }catch(e){ console.warn('Sign out failed', e); } };
+    onAuthStateChanged(auth, (user)=>{ setUser(user?.displayName || user?.email || undefined); });
+    setUser();
 
-    // Right-side Match Results card (visual only)
+    midInfo.append(xpRow, accountRow);
+
+    // Create 3-column row: left controls + results, center inputs, right shop area
+    const triRow = document.createElement('div');
+    Object.assign(triRow.style, { display:'grid', gridTemplateColumns:'auto 1fr auto', alignItems:'stretch', gap:'16px' } as CSSStyleDeclaration);
+    ;(this as any).triRow = triRow;
+
+    // Left column (currently unused placeholder for future controls)
+    const leftCol = document.createElement('div'); Object.assign(leftCol.style,{ display:'grid', gap:'6px', justifyItems:'start' } as CSSStyleDeclaration);
+    ;(this as any).leftCol = leftCol;
+    const ctrl = document.createElement('div'); Object.assign(ctrl.style,{ display:'flex', gap:'8px', alignItems:'center' } as CSSStyleDeclaration);
+    // controls are absolute at top-left of the card now
+
+    // Center column: name + start buttons + xp/account (remove left offset)
+    const centerCol = document.createElement('div'); 
+    Object.assign(centerCol.style,{ 
+      display:'grid', 
+      gap:'6px', 
+      justifyItems:'center',
+      overflow: 'visible' // Allow skin button to be visible
+    } as CSSStyleDeclaration);
+    centerCol.append(nameWrap, modesRow, midInfo);
+
+    // Right column: will contain coins (absolute on card) and Match Results at bottom-left
+    const rightCol = document.createElement('div'); Object.assign(rightCol.style,{ display:'grid', gap:'8px', justifyItems:'start', alignItems:'end', height:'100%' } as CSSStyleDeclaration);
+    ;(this as any).rightCol = rightCol;
+
+    triRow.append(leftCol, centerCol, rightCol);
+
+    // Assemble (compact)
+    form.replaceChildren(title, triRow);
+    grid.append(form);
+
+    // Match Results card goes to right column, bottom-left
     const results = document.createElement('div');
-    Object.assign(results.style, { position:'absolute', top:'20px', right:'14px', width:'260px', padding:'12px', borderRadius:'14px', background:'rgba(255,255,255,0.90)', color:'#123', boxShadow:'0 12px 28px rgba(0,0,0,.25)' } as CSSStyleDeclaration);
+    Object.assign(results.style, { position:'static', width:'260px', padding:'12px', borderRadius:'14px', background:'rgba(255,255,255,0.90)', color:'#123', boxShadow:'0 12px 28px rgba(0,0,0,.25)', margin:'0' } as CSSStyleDeclaration);
     results.innerHTML = `
-      <div style="font-weight:900; margin:2px 0 8px;">Match Results:</div>
-      <div style="font-size:14px; line-height:1.65">
-        Highest mass: <b>—</b><br/>
-        Mass eaten: <b>—</b><br/>
-        Cells eaten: <b>—</b><br/>
-        Survival Time: <b>—</b><br/>
-        Leaderboard time: <b>—</b><br/>
-        Top position: <b>—</b>
+      <div style="font-weight:900; margin:2px 0 8px;">Letztes Match:</div>
+      <div style="font-size:14px; line-height:1.65" id="match-results-content">
+        Noch kein Match gespielt
       </div>
       <div style="display:flex; gap:8px; margin-top:10px;">
         <button id="btn-records" style="flex:1; padding:8px 10px; border:0; border-radius:10px; background:#8b5cf6; color:#fff; font-weight:800; cursor:pointer">Rekorde</button>
@@ -290,6 +403,11 @@ export class StartMenu {
       </div>
     `;
     ;(this as any).resultsCard = results as HTMLDivElement;
+    
+    // Update match results display
+    this.updateMatchResults();
+    
+    rightCol.append(results);
 
     // Hook Rekorde button
     setTimeout(()=>{
@@ -297,78 +415,19 @@ export class StartMenu {
       if (btn){ btn.onclick = ()=> this.openRecordsOverlay(); }
     }, 0);
 
-    // When logged in, show own Top 10 in the Results card
-    onAuthStateChanged(auth, async (user)=>{
-      const metaDiv = results.querySelector('div:nth-child(2)') as HTMLDivElement | null;
-      try {
-        if (user?.uid) {
-          const { fetchUserTop10, fetchUserCoins } = await import('./recordsCloud');
-          const [list, coins] = await Promise.all([
-            fetchUserTop10(user.uid),
-            fetchUserCoins(user.uid)
-          ]);
-          if (list && list.length && metaDiv) {
-            const best = list[0];
-            metaDiv.innerHTML = `<div style=\"font-weight:800\">Max Masse (deine Top 10): ${Math.round(best.maxMass)}</div><div style=\"opacity:.85\">Überlebt: ${Math.round(best.survivedSec)}s</div>`;
-          }
-          // update coin badge
-          this.setCoins(coins);
-        }
-      } catch {}
-    });
-
-    // Bottom bar: Starter Pack + Shop + Google / Account
-    const bottom = document.createElement('div');
-    Object.assign(bottom.style, { position:'absolute', left:'14px', right:'14px', bottom:'12px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px' } as CSSStyleDeclaration);
-    const starter = document.createElement('button'); starter.textContent = 'Starter Pack!'; Object.assign(starter.style, { padding:'10px 12px', border:'0', borderRadius:'12px', fontWeight:'900', background:'linear-gradient(90deg,#ff6b6b,#ff9f43)', color:'#1a1308', boxShadow:'0 10px 22px rgba(255,111,97,.25)', cursor:'pointer' } as CSSStyleDeclaration);
-    const shop = document.createElement('button'); shop.textContent = 'Shop'; Object.assign(shop.style, { padding:'10px 16px', border:'0', borderRadius:'12px', fontWeight:'900', background:'#34d399', color:'#052', boxShadow:'0 10px 22px rgba(52,211,153,.25)', cursor:'pointer' } as CSSStyleDeclaration);
-    // Google login button / user label
-    const account = document.createElement('button');
-    Object.assign(account.style, { marginLeft:'auto', padding:'8px 12px', borderRadius:'999px', background:'rgba(255,255,255,0.92)', color:'#123', fontWeight:'900', border:'0', cursor:'pointer', display:'flex', alignItems:'center', gap:'8px' } as CSSStyleDeclaration);
-    const gLogo = document.createElement('span'); gLogo.textContent = 'G'; Object.assign(gLogo.style,{ width:'22px', height:'22px', borderRadius:'50%', display:'grid', placeItems:'center', background:'#fff', color:'#4285F4', fontWeight:'900', boxShadow:'inset 0 0 0 1px #ddd' } as CSSStyleDeclaration);
-    const gLabel = document.createElement('span'); gLabel.textContent = 'Mit Google anmelden';
-    account.append(gLogo, gLabel);
-
-    // Sign-out button
-    const signoutBtn = document.createElement('button'); signoutBtn.textContent = 'Abmelden';
-    Object.assign(signoutBtn.style, { padding:'8px 12px', borderRadius:'999px', background:'rgba(255,255,255,0.92)', color:'#123', fontWeight:'900', border:'0', cursor:'pointer', display:'none' } as CSSStyleDeclaration);
-
-    const setUser = (name?:string)=>{
-      if (name){
-        account.replaceChildren();
-        const avatar = document.createElement('span'); Object.assign(avatar.style,{ width:'26px', height:'26px', borderRadius:'50%', background:'#e5f2ff', color:'#245', display:'grid', placeItems:'center', fontWeight:'900' } as CSSStyleDeclaration);
-        avatar.textContent = name.trim()[0]?.toUpperCase() || 'U';
-        const nm = document.createElement('span'); nm.textContent = name; Object.assign(nm.style,{ maxWidth:'180px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' } as CSSStyleDeclaration);
-        account.append(avatar, nm);
-        account.onclick = null;
-        signoutBtn.style.display = 'inline-block';
-      } else {
-        account.replaceChildren(gLogo, gLabel);
-        account.onclick = async ()=>{
-          const { auth, googleProvider, signInWithPopup } = await import('./firebase');
-          try{ await signInWithPopup(auth, googleProvider); }catch(e){ console.warn('Google sign-in failed', e); }
-        };
-        signoutBtn.style.display = 'none';
-      }
-    };
-    onAuthStateChanged(auth, (user)=>{ setUser(user?.displayName || user?.email || undefined); });
-    setUser();
-
-    signoutBtn.onclick = async ()=>{
-      try{
-        const { auth, signOut } = await import('./firebase');
-        await signOut(auth);
-      }catch(e){ console.warn('Sign out failed', e); }
-    };
-
-    bottom.append(starter, shop, account, signoutBtn);
-    ;(this as any).bottomBar = bottom as HTMLDivElement;
-
-    // Append
-    card.append(this.musicBtn!, this.fsBtn!, this.coinEl!, grid, results, /* side removed */ bottom, this.startBtn);
+    // Remove old bottom bar and absolute append; just append grid and hidden startBtn
+    card.replaceChildren(grid, this.startBtn);
+    // Append controls and coin badges to the card so they anchor to corners
+    card.appendChild(this.musicBtn!);
+    card.appendChild(this.fsBtn!);
+    card.appendChild(this.coinEl!);
 
     this.root.append(this.bgCanvas, card);
-    document.body.appendChild(this.root);
+
+    // Align the name input left edge with the title text left edge
+    const alignNow = ()=> this.alignNameUnderTitle();
+    requestAnimationFrame(alignNow);
+    window.addEventListener('resize', alignNow);
 
     // iOS Safari: suggest Add to Home Screen for true fullscreen once
     try {
@@ -432,7 +491,24 @@ export class StartMenu {
       }
     } catch {}
 
+    // Hidden offscreen preview canvas (for any rendering needs)
+    this.preview = document.createElement('canvas');
+    this.preview.width = 200; this.preview.height = 200; this.preview.style.display = 'none';
+
     this.updatePreview();
+    this.updateSkinThumb();
+    this.updateAccountBadge();
+
+    // Initialize XP UI and hook updates
+    try {
+      const prog = getUiProgress();
+      (this as any).setXP(prog.value, prog.max, getState().level);
+      setHooks({
+        onXpGain: ()=>{ try{ const p = getUiProgress(); (this as any).setXP(p.value, p.max, getState().level); }catch{} },
+        onLevelUp: (lvl)=>{ try{ const p = getUiProgress(); (this as any).setXP(p.value, p.max, lvl); }catch{} }
+      });
+    } catch {}
+
     this.loopBg();
     this.updateLayout();
     window.addEventListener('resize', ()=> this.updateLayout());
@@ -481,6 +557,32 @@ export class StartMenu {
     ctx.lineWidth = 4; ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
   }
 
+  private updateSkinThumb(){
+    if (!this.skinThumb) return;
+    const c = this.skinThumb; const g = c.getContext('2d'); if (!g) return;
+    g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
+    g.clearRect(0,0,c.width,c.height);
+    g.save(); g.beginPath(); g.arc(c.width/2, c.height/2, Math.min(c.width,c.height)/2, 0, Math.PI*2); g.clip();
+    try { g.drawImage(this.currentSkinCanvas, 0, 0, c.width, c.height); } catch {}
+    g.restore();
+    // outer subtle ring
+    g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.arc(c.width/2, c.height/2, Math.min(c.width,c.height)/2 - 1, 0, Math.PI*2); g.stroke();
+    this.updateAccountBadge();
+  }
+
+  private updateAccountBadge(){
+    try {
+      const c = this.userBadgeCanvas; if (!c) return; const g = c.getContext('2d'); if (!g) return;
+      g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
+      g.clearRect(0,0,c.width,c.height);
+      const r = Math.min(c.width, c.height)/2;
+      g.save(); g.beginPath(); g.arc(c.width/2, c.height/2, r, 0, Math.PI*2); g.clip();
+      g.drawImage(this.currentSkinCanvas, 0, 0, c.width, c.height);
+      g.restore();
+      g.lineWidth = 2; g.strokeStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.arc(c.width/2, c.height/2, r-1, 0, Math.PI*2); g.stroke();
+    } catch {}
+  }
+
   private loopBg(){
     const ctx = this.bgCtx;
     // Prevent multiple loops
@@ -521,6 +623,7 @@ export class StartMenu {
   private updateLayout(){
     const W = window.innerWidth; const H = window.innerHeight;
     const isMobile = W < 820 || H < 640;
+    const isTablet = (navigator.maxTouchPoints && (navigator.maxTouchPoints as number) > 0) && (W >= 820 && W <= 1200);
     const narrowForResults = W < 1060;
 
     // More compact card
@@ -530,37 +633,195 @@ export class StartMenu {
     } as CSSStyleDeclaration);
 
     if (isMobile) {
-      Object.assign(this.card.style, { paddingTop:'56px', paddingRight:'14px', paddingBottom:'72px', paddingLeft:'14px' } as CSSStyleDeclaration);
+      Object.assign(this.card.style, { paddingTop:'56px', paddingRight:'14px', paddingBottom:'24px', paddingLeft:'14px' } as CSSStyleDeclaration);
     } else {
-      Object.assign(this.card.style, { paddingTop:'60px', paddingRight: narrowForResults ? '18px' : '300px', paddingBottom:'76px', paddingLeft: narrowForResults ? '18px' : '78px' } as CSSStyleDeclaration);
+      Object.assign(this.card.style, { paddingTop:'60px', paddingRight:'18px', paddingBottom:'32px', paddingLeft:'18px' } as CSSStyleDeclaration);
     }
 
-    Object.assign(this.titleEl.style, { textAlign:'center', fontSize: isMobile ? '28px' : '36px', margin: isMobile ? '0 0 8px' : '0 0 12px' } as CSSStyleDeclaration);
+    const triRow = (this as any).triRow as HTMLDivElement | undefined;
+    if (triRow){
+      if (isMobile){
+        Object.assign(triRow.style, { gridTemplateColumns:'1fr', gap:'12px', alignItems:'stretch' } as CSSStyleDeclaration);
+        // order: center first, then left, then right
+        const [leftCol, centerCol, rightCol] = [ (this as any).leftCol, triRow.children[1], (this as any).rightCol ] as any[];
+        if (leftCol && rightCol){
+          (centerCol as HTMLElement).style.order = '1';
+          (leftCol as HTMLElement).style.order = '2';
+          (rightCol as HTMLElement).style.order = '3';
+          Object.assign(leftCol.style, { justifyItems:'center' } as CSSStyleDeclaration);
+          Object.assign(rightCol.style, { justifyItems:'start', alignItems:'start', height:'auto' } as CSSStyleDeclaration);
+        }
+      } else {
+        Object.assign(triRow.style, { gridTemplateColumns:'auto 1fr auto', gap:'16px', alignItems:'stretch' } as CSSStyleDeclaration);
+        const [leftCol, centerCol, rightCol] = [ (this as any).leftCol, triRow.children[1], (this as any).rightCol ] as any[];
+        if (leftCol && rightCol){
+          (centerCol as HTMLElement).style.order = '2';
+          (leftCol as HTMLElement).style.order = '1';
+          (rightCol as HTMLElement).style.order = '3';
+          Object.assign(leftCol.style, { justifyItems:'start' } as CSSStyleDeclaration);
+          Object.assign(rightCol.style, { justifyItems:'start', alignItems:'end', height:'100%' } as CSSStyleDeclaration);
+        }
+      }
+    }
 
-    const modesRow = (this as any).modesRow as HTMLDivElement; if (modesRow){ Object.assign(modesRow.style, { gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', width: isMobile ? 'min(420px, 94%)' : 'min(520px, 92%)' } as CSSStyleDeclaration); }
-    const skinsBtn = (this as any).skinsBtn as HTMLButtonElement; if (skinsBtn){ Object.assign(skinsBtn.style, { padding: isMobile ? '8px 11px' : '8px 12px', fontSize: isMobile ? '13px':'14px' } as CSSStyleDeclaration); }
+    // Shift title 30px to the left
+    if (this.titleEl) { (this.titleEl.style as any).transform = 'translateX(-30px)'; }
+
+    const modesRow = (this as any).modesRow as HTMLDivElement; if (modesRow){ Object.assign(modesRow.style, { gridTemplateColumns: 'auto auto auto auto', width: 'auto', justifyContent: 'center', gap: isMobile ? '8px' : '10px', margin: '8px auto 0' } as CSSStyleDeclaration); modesRow.style.transform = 'translateX(115px)'; }
+    const skinsBtn = (this as any).skinsBtn as HTMLButtonElement; if (skinsBtn){ Object.assign(skinsBtn.style, { left: isMobile ? '-54px' : '-60px' } as CSSStyleDeclaration); }
+    const midInfo = (this as any).midInfo as HTMLDivElement | undefined; if (midInfo){ midInfo.style.transform = 'translateX(115px)'; }
     Object.assign(this.nameInput.style, { fontSize: isMobile ? '14px' : '15px', padding: isMobile ? '10px 12px' : '11px 14px' } as CSSStyleDeclaration);
 
     const results = (this as any).resultsCard as HTMLDivElement;
     if (results) {
-      if (isMobile || narrowForResults) {
-        Object.assign(results.style, { position:'static', width:'min(480px, 92%)', margin:'10px auto 0' } as CSSStyleDeclaration);
-      } else {
-        const topOffset = 84; const bottomReserve = 100;
-        Object.assign(results.style, { position:'absolute', width:'240px', right:'12px', top:`${topOffset}px`, maxHeight:`calc(100vh - ${topOffset}px - ${bottomReserve}px)`, overflowY:'auto' } as CSSStyleDeclaration);
-      }
+      Object.assign(results.style, { position:'static', width: isMobile ? 'min(320px, 88vw)' : '260px', margin:'0' } as CSSStyleDeclaration);
     }
 
-    const side = (this as any).sideIcons as HTMLDivElement; if (side){ Object.assign(side.style, { display: (isMobile || narrowForResults) ? 'none':'grid' } as CSSStyleDeclaration); }
-    const bottom = (this as any).bottomBar as HTMLDivElement; if (bottom){ Object.assign(bottom.style, { left: isMobile ? '10px':'12px', right: isMobile ? '10px':'12px', bottom: isMobile ? '8px':'10px', paddingRight: (isMobile || narrowForResults) ? '0' : '280px' } as CSSStyleDeclaration); }
+    // scale action buttons for touch devices (phone/tablet)
+    try{
+      const startBtnVis = this.root.querySelector('button[title="Start"]') as HTMLButtonElement | null;
+      if (startBtnVis){ const size = isMobile ? 72 : isTablet ? 64 : 56; Object.assign(startBtnVis.style, { width: `${size}px`, height: `${size}px`, fontSize: isMobile ? '18px' : '14px' } as CSSStyleDeclaration); }
+      const shopBtn = this.root.querySelector('button[title="Shop"]') as HTMLButtonElement | null;
+      if (shopBtn){ const s = isMobile ? 64 : isTablet ? 60 : 56; Object.assign(shopBtn.style, { width: `${s}px`, height: `${s}px` } as CSSStyleDeclaration); }
+      const giftsBtn = this.root.querySelector('button[title="Gifts"]') as HTMLButtonElement | null;
+      if (giftsBtn){ const s = isMobile ? 64 : isTablet ? 60 : 56; Object.assign(giftsBtn.style, { width: `${s}px`, height: `${s}px` } as CSSStyleDeclaration); }
+      if (skinsBtn){ Object.assign(skinsBtn.style, { left: isMobile ? '-70px' : isTablet ? '-66px' : '-60px', width: isMobile ? '56px' : '44px', height: isMobile ? '56px' : '44px' } as CSSStyleDeclaration); }
+    }catch{}
 
-    const thumb = isMobile ? 46 : 56; for (const cv of this.presetThumbs){ cv.style.width = `${thumb}px`; cv.style.height = `${thumb}px`; }
+    // realign after layout changes
+
+    // If touch device on phone/tablet enforce landscape fullscreen UX
+    if ((isMobile || isTablet) && this.isTouchDevice()){
+      this.ensureMobileLandscapeOverlay();
+    } else {
+      this.removeMobileLandscapeOverlay();
+    }
+
+    this.alignNameUnderTitle();
+  }
+
+  private alignNameUnderTitle(){
+    try {
+      const titleSpan = this.titleTextEl;
+      const form = this.titleEl.parentElement as HTMLElement | null;
+      const wrap = this.nameWrapEl;
+      if (!titleSpan || !form || !wrap) return;
+      const tRect = titleSpan.getBoundingClientRect();
+      const fRect = form.getBoundingClientRect();
+      let left = Math.round(tRect.left - fRect.left) - 115; // shift textbox 115px left (20px + 95px)
+      // Clamp to card width to avoid pushing off-screen
+      const maxLeft = Math.max(0, (this.card.clientWidth || 0) - (wrap.clientWidth || 0) - 20);
+      if (!isFinite(left) || left < 0) left = 0;
+      left = Math.min(left, maxLeft);
+      wrap.style.marginLeft = left + 'px';
+    } catch {}
+  }
+
+  // Ensure overlays appended after the start menu are visible above it
+  private bringLastOverlayToFront(){
+    try{
+      const children = Array.from(document.body.children);
+      // iterate from the end to find the most recently appended overlay that is not this.root
+      for (let i = children.length - 1; i >= 0; i--) {
+        const el = children[i] as HTMLElement;
+        if (el === this.root) continue;
+        const st = getComputedStyle(el);
+        if (st.position === 'fixed' || st.position === 'absolute'){
+          // raise overlay above the menu
+          try { el.style.zIndex = '2100'; el.style.pointerEvents = 'auto'; } catch {};
+          break;
+        }
+      }
+    }catch{}
+  }
+
+  // detect touch capability
+  private isTouchDevice(): boolean {
+    try {
+      const hasTouch = (typeof window !== 'undefined' && 'ontouchstart' in window) || ((navigator && (navigator as any).maxTouchPoints) ? (navigator as any).maxTouchPoints > 0 : false);
+      return !!hasTouch;
+    } catch { return false; }
+  }
+
+  private mobileOverlayEl?: HTMLDivElement;
+  private mobileOverlayCleanup?: ()=>void;
+
+  // Show a rotate-to-landscape + fullscreen prompt on phones/tablets
+  private ensureMobileLandscapeOverlay(){
+    try{
+      // If overlay exists, update visibility based on current orientation
+      const isLandscape = window.innerWidth > window.innerHeight;
+      if (isLandscape){ this.removeMobileLandscapeOverlay(); return; }
+      if (this.mobileOverlayEl) return; // already shown
+
+      const overlay = document.createElement('div');
+      Object.assign(overlay.style, { position:'fixed', inset:'0', zIndex:'4000', display:'grid', placeItems:'center', background:'rgba(0,0,0,0.85)', color:'#fff', textAlign:'center', padding:'20px' } as CSSStyleDeclaration);
+      const card = document.createElement('div'); Object.assign(card.style, { width:'min(560px, 92vw)', padding:'20px', borderRadius:'14px', background:'rgba(8,10,28,0.95)', boxShadow:'0 30px 60px rgba(0,0,0,.6)', fontFamily:'system-ui, sans-serif' } as CSSStyleDeclaration);
+      const h = document.createElement('div'); h.textContent = 'Bitte Gerät drehen'; Object.assign(h.style, { fontWeight:'900', fontSize:'20px', marginBottom:'8px' } as CSSStyleDeclaration);
+      const p = document.createElement('div'); p.innerHTML = 'Dieses Spiel ist für Landscape (Querformat) ausgelegt. Drehe dein Handy/Tablet und tippe auf "Vollbild" für das beste Erlebnis.'; Object.assign(p.style, { opacity:'0.95', marginBottom:'12px' } as CSSStyleDeclaration);
+      const row = document.createElement('div'); Object.assign(row.style, { display:'flex', gap:'10px', justifyContent:'center' } as CSSStyleDeclaration);
+      const btnFs = document.createElement('button'); btnFs.textContent = 'Vollbild & Drehen'; Object.assign(btnFs.style, { padding:'10px 14px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900', background:'#34d399', color:'#052' } as CSSStyleDeclaration);
+      btnFs.onclick = async ()=>{
+        try{
+          const rootAny: any = document.documentElement;
+          if (rootAny.requestFullscreen) await rootAny.requestFullscreen(); else if ((rootAny as any).webkitRequestFullscreen) (rootAny as any).webkitRequestFullscreen();
+        }catch{}
+        // after requesting fullscreen, attempt to nudge UI to landscape (can't force rotation from JS)
+        setTimeout(()=>{
+          if (window.innerWidth > window.innerHeight){ this.removeMobileLandscapeOverlay(); }
+        }, 500);
+      };
+      const btnClose = document.createElement('button'); btnClose.textContent = 'Nur Dreh-Hinweis'; Object.assign(btnClose.style, { padding:'10px 14px', borderRadius:'10px', border:'0', cursor:'pointer', fontWeight:'900', background:'#334155', color:'#fff' } as CSSStyleDeclaration);
+      btnClose.onclick = ()=>{ /* leave overlay so user can rotate manually */ };
+      row.append(btnFs, btnClose);
+      card.append(h, p, row);
+      overlay.append(card);
+      document.body.appendChild(overlay);
+      this.mobileOverlayEl = overlay;
+
+      const onChange = ()=>{
+        if (window.innerWidth > window.innerHeight){ this.removeMobileLandscapeOverlay(); }
+      };
+      window.addEventListener('resize', onChange);
+      window.addEventListener('orientationchange', onChange);
+      this.mobileOverlayCleanup = ()=>{ window.removeEventListener('resize', onChange); window.removeEventListener('orientationchange', onChange); };
+    }catch{}
+  }
+
+  private removeMobileLandscapeOverlay(){
+    try{
+      if (this.mobileOverlayCleanup) { this.mobileOverlayCleanup(); this.mobileOverlayCleanup = undefined; }
+      if (this.mobileOverlayEl){ try{ this.mobileOverlayEl.remove(); }catch{}; this.mobileOverlayEl = undefined; }
+    }catch{}
   }
 
   show(){
+    // bring to front and ensure visible
+    try { document.body.appendChild(this.root); } catch {}
     this.root.style.display = 'grid';
+    this.root.style.pointerEvents = 'auto';
+
+    // Ensure layout and alignment run now the element is attached
+    requestAnimationFrame(() => {
+      try {
+        // Recompute layout and text alignment now that elements are in the DOM
+        this.updateLayout();
+        this.alignNameUnderTitle();
+        // Ensure interactive buttons receive pointer events and sit above background
+        const skinsBtn = (this as any).skinsBtn as HTMLButtonElement | undefined;
+        if (skinsBtn) {
+          skinsBtn.style.pointerEvents = 'auto';
+          skinsBtn.style.zIndex = '2100';
+        }
+        const shopBtn = this.root.querySelector('button[title="Shop"]') as HTMLButtonElement | null;
+        if (shopBtn) { shopBtn.style.pointerEvents = 'auto'; shopBtn.style.zIndex = '2100'; }
+      } catch (err) { /* ignore */ }
+    });
+
     // restart background animation when shown
     if (!this.bgActive) this.loopBg();
+    // update match results display
+    this.updateMatchResults();
   }
   hide(){
     this.root.style.display = 'none';
@@ -570,6 +831,32 @@ export class StartMenu {
       this.bgRAF = undefined;
     }
     this.bgActive = false;
+  }
+
+  updateMatchResults() {
+    const resultsDiv = this.root.querySelector('#match-results-content') as HTMLDivElement;
+    if (!resultsDiv) return;
+    
+    try {
+      // Get last match results from localStorage
+      const stored = localStorage.getItem('lastMatchResults');
+      if (stored) {
+        const lastMatch = JSON.parse(stored);
+        const xpTotal = lastMatch.xpBreakdown?.total || 0;
+        
+        resultsDiv.innerHTML = `
+          <div style="font-weight:800; color:#059669;">Masse erreicht: ${Math.round(lastMatch.maxMass)}</div>
+          <div style="font-weight:800; color:#7c3aed; margin-top:4px;">XP verdient: +${xpTotal}</div>
+          <div style="opacity:0.7; font-size:12px; margin-top:4px;">
+            Überlebt: ${Math.round(lastMatch.survivedSec)}s | Rang: ${lastMatch.rank || '?'}
+          </div>
+        `;
+      } else {
+        resultsDiv.innerHTML = 'Noch kein Match gespielt';
+      }
+    } catch (err) {
+      resultsDiv.innerHTML = 'Noch kein Match gespielt';
+    }
   }
 
   private openRecordsOverlay(){
@@ -591,7 +878,7 @@ export class StartMenu {
         const skin = document.createElement('canvas'); skin.width=48; skin.height=48; Object.assign(skin.style,{ width:'48px', height:'48px', borderRadius:'50%', background:'#111' } as CSSStyleDeclaration);
         if (rec.skinDataUrl){ const img = new Image(); img.onload = ()=>{ const c=skin.getContext('2d')!; c.save(); c.beginPath(); c.arc(24,24,24,0,Math.PI*2); c.clip(); c.drawImage(img,0,0,48,48); c.restore(); }; img.src = rec.skinDataUrl; }
         const meta = document.createElement('div'); meta.textContent = '';
-        meta.innerHTML = `<div style="font-weight:800">Max Masse: ${Math.round(rec.maxMass)}</div><div style="opacity:.85">Überlebt: ${Math.round(rec.survivedSec)}s</div>`;
+        meta.innerHTML = `<div style="font-weight:800">Max Masse: ${Math.round(rec.maxMass)}</div><div style=\"opacity:.85\">Überlebt: ${Math.round(rec.survivedSec)}s</div>`;
         const date = document.createElement('div'); date.textContent = new Date(rec.ts).toLocaleString(); Object.assign(date.style,{ opacity:'.8' } as CSSStyleDeclaration);
         const pos = document.createElement('div');
         row.append(skin, meta, date, pos);
@@ -624,6 +911,81 @@ export class StartMenu {
   }
   setCoins(n:number){
     try { localStorage.setItem('neoncells.coins', String(Math.max(0, Math.floor(n)))); } catch {}
-    if (this.coinEl){ const spans = this.coinEl.querySelectorAll('span'); if (spans[1]) spans[1].textContent = String(this.getCoins()); }
+    if (this.coinEl){
+      const span = this.coinEl.querySelector('span');
+      if (span) span.textContent = String(this.getCoins());
+    }
   }
+}
+
+// Simple SVG sprite factory (no emojis)
+function makeSprite(kind: 'volume-on'|'volume-off'|'fullscreen'|'coin'|'cart'|'gift'|'user'|'palette') {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '20');
+  svg.setAttribute('height', '20');
+  const bg = '#0b0f12';
+  const accent = '#ffd54a';
+  if (kind === 'volume-on' || kind === 'volume-off') {
+    const body = document.createElementNS(ns, 'path');
+    body.setAttribute('d', 'M3 10v4h4l5 4V6L7 10H3z');
+    body.setAttribute('fill', bg);
+    svg.appendChild(body);
+    if (kind === 'volume-on') {
+      const wave1 = document.createElementNS(ns, 'path');
+      wave1.setAttribute('d', 'M14 9c1.5 1 1.5 5 0 6');
+      wave1.setAttribute('stroke', bg);
+      wave1.setAttribute('stroke-width', '2');
+      wave1.setAttribute('fill', 'none');
+      const wave2 = document.createElementNS(ns, 'path');
+      wave2.setAttribute('d', 'M16.5 7.5c2.5 2 2.5 7 0 9');
+      wave2.setAttribute('stroke', bg);
+      wave2.setAttribute('stroke-width', '2');
+      wave2.setAttribute('fill', 'none');
+      wave1.setAttribute('stroke-linecap', 'round');
+      wave2.setAttribute('stroke-linecap', 'round');
+      svg.append(wave1, wave2);
+    }
+  } else if (kind === 'fullscreen') {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', 'M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z');
+    p.setAttribute('fill', bg);
+    svg.appendChild(p);
+  } else if (kind === 'coin') {
+    const c1 = document.createElementNS(ns, 'circle'); c1.setAttribute('cx','12'); c1.setAttribute('cy','12'); c1.setAttribute('r','9'); c1.setAttribute('fill', accent);
+    const c2 = document.createElementNS(ns, 'circle'); c2.setAttribute('cx','12'); c2.setAttribute('cy','12'); c2.setAttribute('r','7'); c2.setAttribute('fill', '#ffe17a');
+    const line = document.createElementNS(ns, 'rect'); line.setAttribute('x','8'); line.setAttribute('y','11'); line.setAttribute('width','8'); line.setAttribute('height','2'); line.setAttribute('rx','1'); line.setAttribute('fill', '#b88b09');
+    svg.append(c1, c2, line);
+  } else if (kind === 'cart') {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', 'M3 5h2l1.5 9h9l2-6H7');
+    p.setAttribute('fill', 'none'); p.setAttribute('stroke', '#fff'); p.setAttribute('stroke-width', '2'); p.setAttribute('stroke-linecap','round'); p.setAttribute('stroke-linejoin','round');
+    const w1 = document.createElementNS(ns, 'circle'); w1.setAttribute('cx','10'); w1.setAttribute('cy','18'); w1.setAttribute('r','1.5'); w1.setAttribute('fill','#fff');
+    const w2 = document.createElementNS(ns, 'circle'); w2.setAttribute('cx','16'); w2.setAttribute('cy','18'); w2.setAttribute('r','1.5'); w2.setAttribute('fill','#fff');
+    svg.append(p, w1, w2);
+  } else if (kind === 'gift') {
+    const box = document.createElementNS(ns, 'rect'); box.setAttribute('x','4'); box.setAttribute('y','10'); box.setAttribute('width','16'); box.setAttribute('height','10'); box.setAttribute('rx','1.5'); box.setAttribute('fill','#fff');
+    const lid = document.createElementNS(ns, 'rect'); lid.setAttribute('x','3'); lid.setAttribute('y','8'); lid.setAttribute('width','18'); lid.setAttribute('height','3'); lid.setAttribute('rx','1'); lid.setAttribute('fill','#dbeafe');
+    const rib = document.createElementNS(ns, 'rect'); rib.setAttribute('x','11'); rib.setAttribute('y','8'); rib.setAttribute('width','2'); rib.setAttribute('height','12'); rib.setAttribute('fill','#93c5fd');
+    const bowL = document.createElementNS(ns, 'path'); bowL.setAttribute('d','M12 8c-1-2-3-3-5-2 2 2 3 3 5 2z'); bowL.setAttribute('fill','#93c5fd');
+    const bowR = document.createElementNS(ns, 'path'); bowR.setAttribute('d','M12 8c1-2 3-3 5-2 -2 2 -3 3 -5 2z'); bowR.setAttribute('fill','#93c5fd');
+    svg.append(box,lid,rib,bowL,bowR);
+  } else if (kind === 'user') {
+    const body = document.createElementNS(ns, 'path');
+    body.setAttribute('d', 'M12 12c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4zm0 2c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z');
+    body.setAttribute('fill', bg);
+    svg.appendChild(body);
+  } else if (kind === 'palette') {
+    // draw a simple painter palette + brush
+    const pal = document.createElementNS(ns, 'path');
+    pal.setAttribute('d','M12 3c-4.97 0-9 3.58-9 8 0 3.08 2.2 4 4 4h2c1.1 0 2 .9 2 2 0 1.1.9 2 2 2 2.76 0 5-2.24 5-5 0-6-3.5-11-6-11z');
+    pal.setAttribute('fill','#e5e7eb');
+    const d1 = document.createElementNS(ns,'circle'); d1.setAttribute('cx','9'); d1.setAttribute('cy','9'); d1.setAttribute('r','1'); d1.setAttribute('fill','#f87171');
+    const d2 = document.createElementNS(ns,'circle'); d2.setAttribute('cx','12'); d2.setAttribute('cy','7.5'); d2.setAttribute('r','1'); d2.setAttribute('fill','#60a5fa');
+    const d3 = document.createElementNS(ns,'circle'); d3.setAttribute('cx','14.5'); d3.setAttribute('cy','10'); d3.setAttribute('r','1'); d3.setAttribute('fill','#34d399');
+    const brush = document.createElementNS(ns,'path'); brush.setAttribute('d','M18 14l-6 6 1.5-4.5L18 14z'); brush.setAttribute('fill','#9ca3af');
+    svg.append(pal,d1,d2,d3,brush);
+  }
+  return svg;
 }
