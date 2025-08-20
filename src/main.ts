@@ -25,8 +25,29 @@ let currentSkinCanvas: HTMLCanvasElement | undefined;
 const menu = new StartMenu({
   onStart: (cfg)=>{
     currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
+
+    // Connect to WS server and announce join
+    try {
+      const wsUrl = (location.origin.replace(/^http/, 'ws'));
+      const ws = new WebSocket(wsUrl);
+      (window as any).ncWs = ws; // debug handle
+      ws.addEventListener('open', ()=>{
+        const name = cfg.name || 'Player';
+        ws.send(JSON.stringify({ type: 'join', name }));
+      });
+      ws.addEventListener('message', (ev)=>{
+        // Placeholder: future sync logic
+        // console.log('ws message', ev.data);
+      });
+      ws.addEventListener('close', ()=>{
+        // console.log('ws closed');
+      });
+      ws.addEventListener('error', ()=>{
+        // console.warn('ws error');
+      });
+    } catch {}
+
     // Start a completely fresh round; spawnPlayers clears roster and sets exact bot count
-    // game.resetRound();
     game.spawnPlayers(69, cfg);
   },
   musicManager
