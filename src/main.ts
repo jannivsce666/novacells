@@ -105,6 +105,7 @@ function mountMenu() {
 
           // Start shared-authoritative client
           sharedClient = new SharedGameClient(canvas);
+          if ((cfg as any).skinCanvas) sharedClient.setLocalSkin((cfg as any).skinCanvas);
           isSharedMode = true;
           showTopNotice('🌍 Verbinde zur Classic-Serverwelt...');
 

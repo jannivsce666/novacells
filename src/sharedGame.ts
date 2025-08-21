@@ -81,6 +81,9 @@ export class SharedGameClient {
   // Blackhole
   private blackhole: { x: number; y: number; radius: number; pullRadius: number; active: boolean; imploding?: boolean } | null = null;
 
+  private skinCanvas?: HTMLCanvasElement;
+  private smooth: Map<string, {x:number;y:number;r:number}> = new Map();
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.isMobile = this.detectMobile();
@@ -424,26 +427,47 @@ export class SharedGameClient {
       ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, Math.max(3, Math.sqrt(b.mass)*0.6), 0, Math.PI*2); ctx.fill();
     }
 
-    // Render all players with skin
+    // Render all players with smoothing and own skin
     for (const player of this.players.values()) {
       const isMe = player.id === this.playerId;
-      for (const cell of player.cells) {
-        // Fill with color; if player.skin has pattern/image later, we can draw it here.
-        ctx.fillStyle = cell.color;
+      player.cells.forEach((cell, idx) => {
+        const key = `p:${player.id}:${idx}`;
+        const prev = this.smooth.get(key) || { x: cell.pos.x, y: cell.pos.y, r: cell.radius };
+        const k = 0.22; // smoothing factor per frame
+        const sx = prev.x + (cell.pos.x - prev.x) * k;
+        const sy = prev.y + (cell.pos.y - prev.y) * k;
+        const sr = prev.r + (cell.radius - prev.r) * k;
+        this.smooth.set(key, { x: sx, y: sy, r: sr });
+
+        // Draw fill: skin for me if available, else color
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        if (isMe && this.skinCanvas) {
+          // draw skin canvas scaled to circle
+          ctx.drawImage(this.skinCanvas, sx - sr, sy - sr, sr*2, sr*2);
+        } else {
+          ctx.fillStyle = cell.color;
+          ctx.fillRect(sx - sr, sy - sr, sr*2, sr*2);
+        }
+        ctx.restore();
+        // Stroke outline
         ctx.strokeStyle = isMe ? '#FFFFFF' : 'rgba(255,255,255,0.3)';
         ctx.lineWidth = isMe ? 4 : 2;
         ctx.beginPath();
-        ctx.arc(cell.pos.x, cell.pos.y, cell.radius, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
         ctx.stroke();
-        if (cell.radius > 15) {
+
+        if (sr > 15) {
           ctx.fillStyle = isMe ? '#FFFFFF' : '#CCCCCC';
-          ctx.font = `${Math.min(20, cell.radius * 0.4)}px system-ui, Arial`;
+          ctx.font = `${Math.min(20, sr * 0.4)}px system-ui, Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(player.name, cell.pos.x, cell.pos.y);
+          ctx.fillText(player.name, sx, sy);
         }
-      }
+      });
     }
 
     ctx.restore(); // End world transform
@@ -500,4 +524,6 @@ export class SharedGameClient {
   isConnected() {
     return this.ws?.readyState === WebSocket.OPEN;
   }
+
+  setLocalSkin(skin: HTMLCanvasElement | undefined){ this.skinCanvas = skin; }
 }
