@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "git-commit-and-push",
+			"command": "zsh -lc 'git add -A && git commit -m \"chore: restore classic single-player, remove server usage paths\" || echo \"no commit\"; echo \"---\"; git status -sb; echo \"---\"; git remote -v; echo \"---\"; CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD); echo \"branch=$CURRENT_BRANCH\"; git push --set-upstream origin \"$CURRENT_BRANCH\"'",
+			"args": [],
+			"group": "build",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
