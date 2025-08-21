@@ -8,6 +8,7 @@ import { makeSkinCanvas, patternFromCanvas, randomSkinCanvas } from './skins';
 import { spawnPowerUps, drawPowerUp, applyPowerUp } from './powerups';
 import { updateBots, BotParams } from './bots';
 import { newMatchTracker, addXp } from './xp';
+import { MultiplayerManager } from './multiplayer';
 
 // --- Agar.io-nahe Tuning (Split/Impulse/Merge) ---
 const SPLIT_DIST_MIN = 100;      // minimale Split-Flugdistanz
@@ -484,6 +485,10 @@ export class Game {
         }
       }
     }
+
+    // Render remote multiplayer players
+    const cameraInfo = this.getCameraInfo();
+    this.multiplayerManager.renderRemotePlayers(ctx, cameraInfo);
 
     // End camera and vignette-like overlay
     ctx.restore();
@@ -1163,16 +1168,22 @@ export class Game {
   // Multiplayer tracking
   private realPlayerCount = 0;
   private ws?: WebSocket;
-  private playerId?: number;
+  public playerId?: number; // Make public for multiplayer access
   private matchTracker = newMatchTracker(); // XP tracking for current match
   private lastTrackedMass = 0; // Track mass for XP growth calculation
   
   // Server messages system
   private serverMessages: Array<{text: string, timestamp: number, type: string}> = [];
   private readonly SERVER_MESSAGE_DURATION = 4000; // 4 seconds
+  
+  // Multiplayer system
+  private multiplayerManager: MultiplayerManager;
 
   constructor(canvas: HTMLCanvasElement){
     this.canvas = canvas;
+    
+    // Initialize multiplayer manager
+    this.multiplayerManager = new MultiplayerManager(this);
 
     const updateCanvasSize = () => {
       // Match backing store to CSS pixels to avoid Safari 100vh/URL bar issues
@@ -1382,6 +1393,10 @@ export class Game {
 
   setWebSocket(ws: WebSocket) {
     this.ws = ws;
+    
+    // Pass WebSocket to multiplayer manager
+    this.multiplayerManager.setWebSocket(ws);
+    
     ws.addEventListener('message', (ev) => {
       try {
         const data = JSON.parse(ev.data);
@@ -2298,5 +2313,72 @@ export class Game {
       }
     }
     return null;
+  }
+
+  // Multiplayer support methods
+  getLocalPlayer(): PlayerState | null {
+    return this.players.get('me') || null;
+  }
+
+  getCameraCenter(): { x: number; y: number } {
+    const me = this.getLocalPlayer();
+    if (!me || me.cells.length === 0) {
+      return { x: 0, y: 0 };
+    }
+
+    // Calculate camera center same way as in render()
+    let cx = 0, cy = 0, M = 0;
+    for (const c of me.cells) {
+      cx += c.pos.x * c.mass;
+      cy += c.pos.y * c.mass;
+      M += c.mass;
+    }
+    return { x: cx / Math.max(1, M), y: cy / Math.max(1, M) };
+  }
+
+  getCameraInfo() {
+    const me = this.getLocalPlayer();
+    if (!me || me.cells.length === 0) {
+      return { x: 0, y: 0, zoom: 1, canvas: this.canvas };
+    }
+
+    const center = this.getCameraCenter();
+    const totalMass = Math.max(this.totalMass(me), 100);
+    const canvas = this.canvas;
+    const screenAspect = canvas.width / canvas.height;
+    
+    let baseScale;
+    if (this.isMobile) {
+      if (screenAspect > 1.5) {
+        baseScale = Math.min(canvas.width/2400, canvas.height/1200) * 1.5;
+      } else if (screenAspect < 0.7) {
+        baseScale = Math.min(canvas.width/1080, canvas.height/2400) * 1.4;
+      } else {
+        baseScale = Math.min(canvas.width/1920, canvas.height/1920) * 1.3;
+      }
+      baseScale = Math.max(0.8, baseScale);
+    } else {
+      baseScale = Math.min(canvas.width/1920, canvas.height/1080);
+    }
+    
+    const pieces = Math.max(1, me.cells.length);
+    const massFactor = Math.pow(totalMass / 100, 0.12);
+    let targetZoomRaw = 1.9 / (massFactor * (1 + (pieces - 1) * 0.05));
+    targetZoomRaw += this.zoomBias;
+    
+    const minZoom = this.isMobile ? 0.8 : 1.2;
+    const maxZoom = this.isMobile ? 2.0 : 2.6;
+    const targetZoom = this.clamp(targetZoomRaw, minZoom, maxZoom);
+    
+    return {
+      x: center.x,
+      y: center.y,
+      zoom: baseScale * targetZoom,
+      canvas: this.canvas
+    };
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
   }
 }

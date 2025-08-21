@@ -62,9 +62,10 @@ function broadcastPlayerCount() {
   }
 }
 
-function broadcastPlayerJoined(playerName) {
+function broadcastPlayerJoined(playerId, playerName) {
   const message = JSON.stringify({
     type: 'playerJoined',
+    playerId: playerId,
     playerName: playerName,
     timestamp: Date.now()
   });
@@ -76,9 +77,10 @@ function broadcastPlayerJoined(playerName) {
   }
 }
 
-function broadcastPlayerLeft(playerName) {
+function broadcastPlayerLeft(playerId, playerName) {
   const message = JSON.stringify({
-    type: 'playerLeft', 
+    type: 'playerLeft',
+    playerId: playerId,
     playerName: playerName,
     timestamp: Date.now()
   });
@@ -126,7 +128,7 @@ wss.on('connection', (ws, req) => {
       });
       
       // Broadcast join message to all clients
-      broadcastPlayerJoined(data.name);
+      broadcastPlayerJoined(playerId, data.name);
       
       // Broadcast updated player count
       broadcastPlayerCount();
@@ -138,6 +140,31 @@ wss.on('connection', (ws, req) => {
         player.position = data.position;
         player.cells = data.cells || [];
         player.lastSeen = Date.now();
+      }
+      
+    } else if (data?.type === 'playerPosition') {
+      // Relay player position to other clients
+      const player = gameState.players.get(playerId);
+      if (player) {
+        player.position = data.position;
+        player.cells = data.cells || [];
+        player.lastSeen = Date.now();
+        
+        // Broadcast position to other players
+        const positionMessage = JSON.stringify({
+          type: 'playerPosition',
+          playerId: playerId,
+          playerName: player.name,
+          position: data.position,
+          cells: data.cells,
+          timestamp: data.timestamp
+        });
+        
+        for (const client of wss.clients) {
+          if (client.readyState === 1 && client !== ws) {
+            try { client.send(positionMessage); } catch {}
+          }
+        }
       }
       
     } else if (data?.type === 'heartbeat') {
@@ -166,7 +193,7 @@ wss.on('connection', (ws, req) => {
     gameState.players.delete(playerId);
     
     // Broadcast leave message
-    broadcastPlayerLeft(playerName);
+    broadcastPlayerLeft(playerId, playerName);
     
     // Broadcast updated player count
     broadcastPlayerCount();
