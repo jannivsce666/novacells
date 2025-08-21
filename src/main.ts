@@ -104,6 +104,7 @@ function mountMenu() {
           
           // Start with your classic game that works perfectly
           game = new Game(canvas);
+          game.onGameOver = handleGameOver; // Set the game over handler
           isSharedMode = false;
           
           showTopNotice('🎮 Starte Spiel mit Multiplayer-Features...');
@@ -151,6 +152,7 @@ function mountMenu() {
           
           // Ultimate fallback - pure classic game
           game = new Game(canvas);
+          game.onGameOver = handleGameOver; // Set the game over handler
           isSharedMode = false;
           (game as Game).spawnPlayers(69, cfg);
         }
@@ -239,8 +241,8 @@ function getLastMatchResults() {
   return null;
 }
 
-// Game Over Overlay
-game.onGameOver = async (stats)=>{
+// Game Over handler function that will be assigned to game instances
+const handleGameOver = async (stats: any) => {
   try {
     const skinUrl = currentSkinCanvas ? currentSkinCanvas.toDataURL('image/png') : undefined;
     const rec = { skinDataUrl: skinUrl||'', maxMass: stats.maxMass, survivedSec: stats.survivedSec, ts: Date.now() };
