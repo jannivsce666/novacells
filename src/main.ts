@@ -6,12 +6,14 @@ import { addRecord } from './records';
 import { pushRecordToCloud } from './recordsCloud';
 import { auth, onAuthStateChanged } from './firebase';
 import { StartMenu } from './startMenu';
+import { SharedGameClient } from './sharedGame';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 let game: Game;
-let isSharedMode = false; // Will be set to true when connecting to server
+let sharedClient: SharedGameClient | null = null;
+let isSharedMode = false; // Will be true when connecting to server
 
-// Initialize with classic single-player game
+// Initialize with classic single-player game (fallback before menu)
 game = new Game(canvas);
 
 // Music Manager
@@ -93,8 +95,7 @@ function mountMenu() {
       onStart: (cfg)=>{
         currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
         
-        // 🎮 AUTOMATIC MULTIPLAYER: Start with classic game + basic multiplayer features
-        // This ensures your game works immediately while keeping multiplayer features
+        // 🌍 Server-authoritative Classic World: join shared server and render authoritative state
         try {
           const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
           const params = new URLSearchParams(location.search);
@@ -102,36 +103,31 @@ function mountMenu() {
           const defaultProd = 'wss://novacellsserver.fly.dev';
           const wsUrl = override || (isDev ? 'ws://localhost:8080' : defaultProd);
 
-          // 1:1 Classic World in ALL environments; WS only for presence/positions
-          game = new Game(canvas);
-          game.onGameOver = handleGameOver;
-          isSharedMode = false;
-          showTopNotice('🎮 Classic-World gestartet');
+          // Start shared-authoritative client
+          sharedClient = new SharedGameClient(canvas);
+          isSharedMode = true;
+          showTopNotice('🌍 Verbinde zur Classic-Serverwelt...');
 
           try {
             const ws = new WebSocket(wsUrl);
             (window as any).ncWs = ws;
             ws.addEventListener('open', ()=>{
               const name = cfg.name || 'Player';
-              ws.send(JSON.stringify({ type: 'join', name }));
-              (game as Game).setWebSocket(ws);
-              showTopNotice('🟢 Verbunden (Classic bleibt 1:1)');
+              try { ws.send(JSON.stringify({ type: 'joinShared', name })); } catch {}
+              sharedClient!.setWebSocket(ws);
+              showTopNotice('🟢 Verbunden (Server-Classic)');
             });
-            ws.addEventListener('error', ()=> showTopNotice('🤖 Offline-Modus - Spiel läuft mit Bots'));
+            ws.addEventListener('error', ()=> showTopNotice('🔴 Verbindungsfehler – versuche erneut'));
           } catch {
-            showTopNotice('🤖 Offline-Modus - Spiel läuft mit Bots');
+            showTopNotice('🔴 Verbindungsfehler');
           }
-
-          // Spawn your classic game unchanged
-          (game as Game).spawnPlayers(69, cfg);
         } catch (mainError) {
-          console.error('Failed to start game:', mainError);
-          showTopNotice('⚠️ Starte Basis-Spiel...');
-          
-          // Ultimate fallback - pure classic game
-          game = new Game(canvas);
-          game.onGameOver = handleGameOver; // Set the game over handler
+          console.error('Failed to start shared game:', mainError);
+          showTopNotice('⚠️ Starte Classic-Fallback...');
+          // Fallback - pure classic game
           isSharedMode = false;
+          game = new Game(canvas);
+          game.onGameOver = handleGameOver;
           (game as Game).spawnPlayers(69, cfg);
         }
       },
@@ -432,7 +428,17 @@ function updateRankHud(ts:number){
   if (ts - lastRankUpdate < 200) return; // throttle ~5x/sec
   lastRankUpdate = ts;
   try {
-    // Always Classic mode HUD (rank)
+    if (isSharedMode && sharedClient) {
+      const count = sharedClient.getPlayerCount();
+      if (count > 0) {
+        rankHud.style.display = 'block';
+        rankHud.textContent = `${count} Spieler`;
+        return;
+      }
+      rankHud.style.display = 'none';
+      return;
+    }
+    // Classic mode
     const meId = (game as any).me as string;
     const me = (game as any).players?.get?.(meId);
     const alive = Array.from((game as any).players?.values?.() || []).filter((p:any)=>p.alive).length;
@@ -463,9 +469,7 @@ function loop(ts:number){
       requestAnimationFrame(loop);
       return;
     }
-    
-    // Skip every 4th frame on very low-end devices if performance is bad
-    if (dt > 25) { // If frame time is over 25ms (40fps)
+    if (dt > 25) {
       frameSkipCounter++;
       if (frameSkipCounter % 4 === 0) {
         requestAnimationFrame(loop);
@@ -476,17 +480,20 @@ function loop(ts:number){
   
   last = ts;
   
-  // Cap delta time to prevent spiral of death
-  const cappedDt = Math.min(dt, 33.33); // Cap at 30fps worth of time
+  const cappedDt = Math.min(dt, 33.33);
   
   try {
-    // Classic single-player mode (always)
-    (game as Game).step(cappedDt, getInput(), ts);
-    (game as Game).draw(ts);
+    if (isSharedMode && sharedClient) {
+      // Render authoritative world from server
+      sharedClient.render(ts);
+    } else {
+      // Classic fallback
+      (game as Game).step(cappedDt, getInput(), ts);
+      (game as Game).draw(ts);
+    }
     updateRankHud(ts);
   } catch (error) {
     console.error('Game loop error:', error);
-    // Continue the loop even if there's an error
   }
   
   requestAnimationFrame(loop);

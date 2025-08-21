@@ -60,12 +60,40 @@ export class SharedGameClient {
   private frameDelta = 0;
   private level: LevelDesign; // classic background & border
 
+  private ejectInterval?: number;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.isMobile = this.detectMobile();
     this.setupEventListeners();
     this.level = new LevelDesign(this.canvas);
     window.addEventListener('resize', () => this.level.onResize());
+
+    // Also bind keyboard/mouse for split/eject
+    window.addEventListener('keydown', (e)=>{
+      if (e.code === 'Space') { this.sendAction('split'); }
+      if (e.code === 'KeyW') { this.startEjecting(); }
+    });
+    window.addEventListener('keyup', (e)=>{
+      if (e.code === 'KeyW') { this.stopEjecting(); }
+    });
+    // Right mouse = eject hold
+    this.canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
+    this.canvas.addEventListener('mousedown', (e)=>{ if (e.button===2) this.startEjecting(); });
+    this.canvas.addEventListener('mouseup',   (e)=>{ if (e.button===2) this.stopEjecting(); });
+
+    // Hook mobile action buttons if present
+    setTimeout(()=>{
+      const btnSplit = document.getElementById('btn-split');
+      const btnEject = document.getElementById('btn-eject');
+      btnSplit?.addEventListener('click', ()=> this.sendAction('split'));
+      btnSplit?.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); this.sendAction('split'); }, { passive:false } as any);
+      btnEject?.addEventListener('mousedown', ()=> this.startEjecting());
+      btnEject?.addEventListener('mouseup',   ()=> this.stopEjecting());
+      btnEject?.addEventListener('mouseleave',()=> this.stopEjecting());
+      btnEject?.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); this.startEjecting(); }, { passive:false } as any);
+      btnEject?.addEventListener('touchend', ()=> this.stopEjecting());
+    }, 0);
   }
 
   private detectMobile(): boolean {
@@ -115,6 +143,19 @@ export class SharedGameClient {
     setInterval(() => {
       this.sendInput();
     }, 1000 / 30); // 30 FPS input updates
+  }
+
+  private startEjecting(){
+    if (this.ejectInterval || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const shoot = ()=> this.sendAction('eject');
+    shoot();
+    this.ejectInterval = window.setInterval(shoot, 140); // ~7/s
+  }
+  private stopEjecting(){ if (this.ejectInterval){ clearInterval(this.ejectInterval); this.ejectInterval = undefined; } }
+
+  private sendAction(kind: 'split'|'eject'){
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type:'playerAction', action: kind, timestamp: Date.now() }));
   }
 
   private handleServerMessage(data: any) {
