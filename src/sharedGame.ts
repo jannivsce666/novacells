@@ -2,12 +2,10 @@
 import { clamp, rand, randInt, norm, radiusFromMass, speedFromMass, sum } from './utils';
 import type { PlayerState, Pellet, Virus, PowerUp, PowerUpType, Bullet, Cell, PlayerConfig } from './types';
 import type { InputState } from './input';
-import { LevelDesign } from './LevelDesign';
 
 export interface SharedPlayer {
   id: number;
   name: string;
-  skin?: any;
   cells: Array<{
     pos: { x: number; y: number };
     radius: number;
@@ -32,20 +30,6 @@ export interface SharedVirus {
   y: number;
   radius: number;
   mass: number;
-  kind?: 'green' | 'red';
-  ang?: number;
-  spin?: number;
-  ttl?: number;
-}
-
-// New: bullets from server
-interface SharedBullet {
-  id: number;
-  pos: { x: number; y: number };
-  vel: { x: number; y: number };
-  mass: number;
-  owner: 'hazard' | 'player';
-  ttl: number;
 }
 
 export class SharedGameClient {
@@ -58,7 +42,6 @@ export class SharedGameClient {
   private pellets: Map<number, SharedPellet> = new Map();
   private viruses: Map<number, SharedVirus> = new Map();
   private powerUps: Map<number, any> = new Map();
-  private bullets: Map<number, SharedBullet> = new Map();
   private worldBounds = { x: -3000, y: -3000, width: 6000, height: 6000 };
   
   // Camera and rendering
@@ -74,48 +57,11 @@ export class SharedGameClient {
   private isMobile = false;
   private lastFrameTime = 0;
   private frameDelta = 0;
-  private level: LevelDesign; // classic background & border
-
-  private ejectInterval?: number;
-
-  // Blackhole
-  private blackhole: { x: number; y: number; radius: number; pullRadius: number; active: boolean; imploding?: boolean } | null = null;
-
-  private skinCanvas?: HTMLCanvasElement;
-  private smooth: Map<string, {x:number;y:number;r:number}> = new Map();
-
+  
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.isMobile = this.detectMobile();
     this.setupEventListeners();
-    this.level = new LevelDesign(this.canvas);
-    window.addEventListener('resize', () => this.level.onResize());
-
-    // Also bind keyboard/mouse for split/eject
-    window.addEventListener('keydown', (e)=>{
-      if (e.code === 'Space') { this.sendAction('split'); }
-      if (e.code === 'KeyW') { this.startEjecting(); }
-    });
-    window.addEventListener('keyup', (e)=>{
-      if (e.code === 'KeyW') { this.stopEjecting(); }
-    });
-    // Right mouse = eject hold
-    this.canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
-    this.canvas.addEventListener('mousedown', (e)=>{ if (e.button===2) this.startEjecting(); });
-    this.canvas.addEventListener('mouseup',   (e)=>{ if (e.button===2) this.stopEjecting(); });
-
-    // Hook mobile action buttons if present
-    setTimeout(()=>{
-      const btnSplit = document.getElementById('btn-split');
-      const btnEject = document.getElementById('btn-eject');
-      btnSplit?.addEventListener('click', ()=> this.sendAction('split'));
-      btnSplit?.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); this.sendAction('split'); }, { passive:false } as any);
-      btnEject?.addEventListener('mousedown', ()=> this.startEjecting());
-      btnEject?.addEventListener('mouseup',   ()=> this.stopEjecting());
-      btnEject?.addEventListener('mouseleave',()=> this.stopEjecting());
-      btnEject?.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); this.startEjecting(); }, { passive:false } as any);
-      btnEject?.addEventListener('touchend', ()=> this.stopEjecting());
-    }, 0);
   }
 
   private detectMobile(): boolean {
@@ -167,19 +113,6 @@ export class SharedGameClient {
     }, 1000 / 30); // 30 FPS input updates
   }
 
-  private startEjecting(){
-    if (this.ejectInterval || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const shoot = ()=> this.sendAction('eject');
-    shoot();
-    this.ejectInterval = window.setInterval(shoot, 140); // ~7/s
-  }
-  private stopEjecting(){ if (this.ejectInterval){ clearInterval(this.ejectInterval); this.ejectInterval = undefined; } }
-
-  private sendAction(kind: 'split'|'eject'){
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ type:'playerAction', action: kind, timestamp: Date.now() }));
-  }
-
   private handleServerMessage(data: any) {
     switch (data.type) {
       case 'initialWorld':
@@ -187,19 +120,15 @@ export class SharedGameClient {
         this.worldBounds = data.worldBounds;
         this.updatePellets(data.pellets);
         this.updateViruses(data.viruses);
-        this.updatePowerUps(data.powerUps || []);
-        this.updateBullets(data.bullets || []);
-        this.blackhole = data.blackhole || null;
+        this.updatePowerUps(data.powerUps);
         console.log(`🌍 Connected to shared world as Player ${this.playerId}`);
         break;
 
       case 'worldState':
-        this.updatePlayers(data.players || []);
-        this.updatePellets(data.pellets || []);
-        this.updateViruses(data.viruses || []);
-        this.updatePowerUps(data.powerUps || []);
-        this.updateBullets(data.bullets || []);
-        this.blackhole = data.blackhole || null;
+        this.updatePlayers(data.players);
+        this.updatePellets(data.pellets);
+        this.updateViruses(data.viruses);
+        this.updatePowerUps(data.powerUps);
         break;
 
       case 'pelletEaten':
@@ -238,7 +167,7 @@ export class SharedGameClient {
   private updateViruses(virusData: SharedVirus[]) {
     this.viruses.clear();
     for (const virus of virusData) {
-      this.viruses.set(virus.id as any, virus as any);
+      this.viruses.set(virus.id, virus);
     }
   }
 
@@ -247,11 +176,6 @@ export class SharedGameClient {
     for (const powerUp of powerUpData) {
       this.powerUps.set(powerUp.id, powerUp);
     }
-  }
-
-  private updateBullets(bulletData: SharedBullet[]) {
-    this.bullets.clear();
-    for (const b of bulletData) this.bullets.set(b.id, b);
   }
 
   private sendInput() {
@@ -298,12 +222,6 @@ export class SharedGameClient {
     this.camera.x = cx / Math.max(1, totalMass);
     this.camera.y = cy / Math.max(1, totalMass);
 
-    // Clamp camera to bounds so spawn doesn’t look outside
-    const halfW = (this.canvas.width/2) / Math.max(0.0001, this.camera.zoom);
-    const halfH = (this.canvas.height/2) / Math.max(0.0001, this.camera.zoom);
-    this.camera.x = Math.max(this.worldBounds.x + halfW, Math.min(this.worldBounds.x + this.worldBounds.width - halfW, this.camera.x));
-    this.camera.y = Math.max(this.worldBounds.y + halfH, Math.min(this.worldBounds.y + this.worldBounds.height - halfH, this.camera.y));
-
     // Calculate zoom based on mass
     const canvas = this.canvas;
     const screenAspect = canvas.width / canvas.height;
@@ -347,36 +265,20 @@ export class SharedGameClient {
     // Update camera
     this.updateCamera();
 
-    // Clear canvas and draw classic galaxy background
+    // Clear canvas
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    this.level.drawBackgroundScreen(ctx);
+
+    // Background
+    ctx.fillStyle = '#001122';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Set up world transform
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.scale(this.camera.zoom, this.camera.zoom);
     ctx.translate(-this.camera.x, -this.camera.y);
-
-    // Draw classic rainbow border for world
-    ctx.save();
-    ctx.translate(this.worldBounds.x, this.worldBounds.y);
-    this.level.drawRainbowBorder(ctx, 80, { w: this.worldBounds.width, h: this.worldBounds.height });
-    ctx.restore();
-
-    // Blackhole
-    if (this.blackhole && this.blackhole.active) {
-      const bh = this.blackhole;
-      const g = ctx.createRadialGradient(bh.x, bh.y, Math.max(8, bh.radius * 0.2), bh.x, bh.y, bh.radius);
-      g.addColorStop(0, 'rgba(0,0,0,0.95)');
-      g.addColorStop(0.7, 'rgba(10,10,30,0.6)');
-      g.addColorStop(1, 'rgba(10,10,30,0.0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(bh.x, bh.y, bh.radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
 
     // Render pellets
     for (const pellet of this.pellets.values()) {
@@ -386,93 +288,46 @@ export class SharedGameClient {
       ctx.fill();
     }
 
-    // Render powerups (larger symbols and glow)
-    for (const pu of this.powerUps.values()) {
-      let fill = '#fff'; let label = '';
-      switch (pu.type) {
-        case 'star': fill = '#fcd34d'; label = '★'; break;
-        case 'multishot': fill = '#60a5fa'; label = '×'; break;
-        case 'grow': fill = '#34d399'; label = '+'; break;
-        case 'magnet': fill = '#a78bfa'; label = 'U'; break;
-        case 'lightning': fill = '#f472b6'; label = '⚡'; break;
-      }
-      ctx.shadowColor = fill; ctx.shadowBlur = 20;
-      ctx.fillStyle = fill; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(pu.x, pu.y, 18, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = '#0b1028'; ctx.font = 'bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(label, pu.x, pu.y+1);
-    }
-
-    // Render viruses (green/red)
+    // Render viruses
     for (const virus of this.viruses.values()) {
-      const isRed = (virus as any).kind === 'red';
-      if (isRed) {
-        ctx.fillStyle = '#ff375f';
-        ctx.strokeStyle = '#ff99ad';
-      } else {
-        ctx.fillStyle = '#00FFAA';
-        ctx.strokeStyle = '#00C08A';
-      }
+      ctx.fillStyle = '#00FF00';
+      ctx.strokeStyle = '#008800';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc((virus as any).x, (virus as any).y, (virus as any).radius, 0, Math.PI * 2);
+      ctx.arc(virus.x, virus.y, virus.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
 
-    // Render bullets
-    for (const b of this.bullets.values()) {
-      ctx.fillStyle = b.owner === 'hazard' ? '#ffd166' : '#a3e635';
-      ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, Math.max(3, Math.sqrt(b.mass)*0.6), 0, Math.PI*2); ctx.fill();
-    }
-
-    // Render all players with smoothing and own skin
+    // Render all players
     for (const player of this.players.values()) {
       const isMe = player.id === this.playerId;
-      player.cells.forEach((cell, idx) => {
-        const key = `p:${player.id}:${idx}`;
-        const prev = this.smooth.get(key) || { x: cell.pos.x, y: cell.pos.y, r: cell.radius };
-        const k = 0.22; // smoothing factor per frame
-        const sx = prev.x + (cell.pos.x - prev.x) * k;
-        const sy = prev.y + (cell.pos.y - prev.y) * k;
-        const sr = prev.r + (cell.radius - prev.r) * k;
-        this.smooth.set(key, { x: sx, y: sy, r: sr });
-
-        // Draw fill: skin for me if available, else color
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-        ctx.closePath();
-        ctx.clip();
-        if (isMe && this.skinCanvas) {
-          // draw skin canvas scaled to circle
-          ctx.drawImage(this.skinCanvas, sx - sr, sy - sr, sr*2, sr*2);
-        } else {
-          ctx.fillStyle = cell.color;
-          ctx.fillRect(sx - sr, sy - sr, sr*2, sr*2);
-        }
-        ctx.restore();
-        // Stroke outline
+      
+      for (const cell of player.cells) {
+        // Draw cell
+        ctx.fillStyle = cell.color;
         ctx.strokeStyle = isMe ? '#FFFFFF' : 'rgba(255,255,255,0.3)';
         ctx.lineWidth = isMe ? 4 : 2;
+        
         ctx.beginPath();
-        ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+        ctx.arc(cell.pos.x, cell.pos.y, cell.radius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
 
-        if (sr > 15) {
+        // Draw player name
+        if (cell.radius > 15) {
           ctx.fillStyle = isMe ? '#FFFFFF' : '#CCCCCC';
-          ctx.font = `${Math.min(20, sr * 0.4)}px system-ui, Arial`;
+          ctx.font = `${Math.min(20, cell.radius * 0.4)}px Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(player.name, sx, sy);
+          ctx.fillText(player.name, cell.pos.x, cell.pos.y);
         }
-      });
+      }
     }
 
     ctx.restore(); // End world transform
 
-    // UI Elements similar to classic
+    // UI Elements
     this.renderUI(ctx);
 
     ctx.restore();
@@ -524,6 +379,4 @@ export class SharedGameClient {
   isConnected() {
     return this.ws?.readyState === WebSocket.OPEN;
   }
-
-  setLocalSkin(skin: HTMLCanvasElement | undefined){ this.skinCanvas = skin; }
 }
