@@ -247,6 +247,10 @@ function keepInBounds(pos){
   pos.x = clamp(pos.x, WORLD.x, WORLD.x + WORLD.width);
   pos.y = clamp(pos.y, WORLD.y, WORLD.y + WORLD.height);
 }
+function keepInBoundsXY(obj){
+  // supports {x,y} or {pos:{x,y}}
+  if (obj.pos) keepInBounds(obj.pos); else keepInBounds(obj);
+}
 
 function updatePlayerPhysics(player, dt) {
   // Grow timer increases mass slowly
@@ -255,26 +259,24 @@ function updatePlayerPhysics(player, dt) {
     player.power.grow = Math.max(0, player.power.grow - dt);
   }
 
-  // Move toward input target
+  // Move toward input target (direct velocity for responsive feel)
   for (const cell of player.cells) {
     if (cell.mergeCooldown && cell.mergeCooldown > 0) cell.mergeCooldown -= dt;
     const tx = player.inputTarget?.x ?? cell.pos.x;
     const ty = player.inputTarget?.y ?? cell.pos.y;
     const dx = tx - cell.pos.x, dy = ty - cell.pos.y;
     const d = Math.hypot(dx,dy);
-    if (d > 1) {
-      const s = speedFromMass(cell.mass);
-      const dir = { x: dx/d, y: dy/d };
+    const s = speedFromMass(cell.mass);
+    if (d > 0.5) {
+      const dir = { x: dx/(d||1), y: dy/(d||1) };
       cell.vel = cell.vel || { x: 0, y: 0 };
-      cell.vel.x += dir.x * s * 0.8 * dt;
-      cell.vel.y += dir.y * s * 0.8 * dt;
-      const v = Math.hypot(cell.vel.x, cell.vel.y);
-      const vmax = s;
-      if (v > vmax){ const k = vmax / v; cell.vel.x *= k; cell.vel.y *= k; }
+      cell.vel.x = dir.x * s;
+      cell.vel.y = dir.y * s;
+    } else {
+      if (cell.vel){ cell.vel.x *= 0.85; cell.vel.y *= 0.85; }
     }
-    // Integrate + friction
+    // Integrate
     cell.pos.x += (cell.vel?.x||0) * dt; cell.pos.y += (cell.vel?.y||0) * dt;
-    if (cell.vel){ cell.vel.x *= 0.90; cell.vel.y *= 0.90; }
     keepInBounds(cell.pos);
   }
 
@@ -286,7 +288,7 @@ function updatePlayerPhysics(player, dt) {
         const dx = sc.pos.x - pl.x, dy = sc.pos.y - pl.y; const d = Math.hypot(dx,dy);
         if (d < sc.radius + 120){
           const nx = dx/(d||1), ny = dy/(d||1);
-          pl.x += nx * 140 * dt; pl.y += ny * 140 * dt; keepInBounds(pl);
+          pl.x += nx * 140 * dt; pl.y += ny * 140 * dt; keepInBoundsXY(pl);
         }
       }
     }
@@ -391,7 +393,7 @@ function resolveEats(){
 function updateViruses(dt){
   // Eject pellets motion
   for (const pl of gameState.pellets.values()){
-    if (pl.vel){ pl.x += pl.vel.x * dt; pl.y += pl.vel.y * dt; pl.vel.x *= 0.93; pl.vel.y *= 0.93; keepInBounds(pl); }
+    if (pl.vel){ pl.x += pl.vel.x * dt; pl.y += pl.vel.y * dt; pl.vel.x *= 0.93; pl.vel.y *= 0.93; keepInBoundsXY(pl); }
     if (pl.life !== undefined){ pl.life -= dt; if (pl.life <= 0){ gameState.pellets.delete(pl.id); } }
   }
   // Virus feeding & behavior
@@ -469,9 +471,8 @@ function updateBlackhole(dt){
   for (const p of gameState.players.values()){
     for (const c of p.cells){
       const dx = bh.x - c.pos.x, dy = bh.y - c.pos.y; const d = Math.hypot(dx,dy) || 1;
-      if (d < bh.pullRadius){ const strength = (1 - d/bh.pullRadius) * 260; c.pos.x += (dx/d) * strength * dt; c.pos.y += (dy/d) * strength * dt; }
+      if (d < bh.pullRadius){ const strength = (1 - d/bh.pullRadius) * 260; c.pos.x += (dx/d) * strength * dt; c.pos.y += (dy/d) * strength * dt; keepInBounds(c.pos); }
       if (d < bh.radius * 0.6){ // consume
-        // respawn player
         p.cells = []; respawnPlayer(p);
       }
     }
@@ -479,13 +480,14 @@ function updateBlackhole(dt){
   // affect pellets slightly
   for (const pl of gameState.pellets.values()){
     const dx = bh.x - pl.x, dy = bh.y - pl.y; const d = Math.hypot(dx,dy) || 1;
-    if (d < bh.pullRadius){ const s = (1 - d/bh.pullRadius) * 140; pl.x += (dx/d) * s * dt; pl.y += (dy/d) * s * dt; keepInBounds(pl); }
+    if (d < bh.pullRadius){ const s = (1 - d/bh.pullRadius) * 140; pl.x += (dx/d) * s * dt; pl.y += (dy/d) * s * dt; keepInBoundsXY(pl); }
   }
 }
 
 function respawnPlayer(player) {
+  const margin = 300;
   player.cells = [{
-    pos: { x: rand(WORLD.x, WORLD.x+WORLD.width), y: rand(WORLD.y, WORLD.y+WORLD.height) },
+    pos: { x: rand(WORLD.x+margin, WORLD.x+WORLD.width-margin), y: rand(WORLD.y+margin, WORLD.y+WORLD.height-margin) },
     radius: radiusFromMass(80), mass: 80,
     color: `hsl(${Math.random()*360|0}, 70%, 60%)`, vel: { x: 0, y: 0 }, mergeCooldown: 3.0
   }];
@@ -500,7 +502,7 @@ function broadcastWorldState() {
     powerUps: Array.from(gameState.powerUps.values()),
     bullets: Array.from(gameState.bullets.values()),
     blackhole: gameState.blackhole,
-    players: Array.from(gameState.players.values()).map(p => ({ id: p.id, name: p.name, cells: p.cells })),
+    players: Array.from(gameState.players.values()).map(p => ({ id: p.id, name: p.name, skin: p.skin, cells: p.cells })),
     timestamp: Date.now(),
     worldBounds: gameState.worldBounds
   };
@@ -528,7 +530,8 @@ function broadcastPlayerLeft(playerId, playerName) {
 initializeWorld();
 
 // Start game loop
-setInterval(gameTick, 1000 / 20); // 20 TPS
+clearInterval(globalThis.__gameLoopIntervalId || 0);
+globalThis.__gameLoopIntervalId = setInterval(gameTick, 1000 / 30); // 30 TPS
 
 // Clean up disconnected players periodically
 setInterval(() => {
@@ -552,14 +555,16 @@ wss.on('connection', (ws, req) => {
     const text = msg.toString(); let data; try { data = JSON.parse(text); } catch { data = { type: 'text', text }; }
 
     if (data?.type === 'join' || data?.type === 'joinShared') {
+      const margin = 300;
       const playerData = {
         id: playerId,
         name: data.name || `Player_${playerId}`,
+        skin: data.skin || null,
         ws,
         lastSeen: Date.now(),
         inputTarget: undefined,
         power: newPowerState(),
-        cells: [{ pos: { x: rand(WORLD.x, WORLD.x+WORLD.width), y: rand(WORLD.y, WORLD.y+WORLD.height) }, radius: radiusFromMass(80), mass: 80, color: `hsl(${Math.random()*360|0}, 70%, 60%)`, vel: { x:0, y:0 }, mergeCooldown: 3.0 }]
+        cells: [{ pos: { x: rand(WORLD.x+margin, WORLD.x+WORLD.width-margin), y: rand(WORLD.y+margin, WORLD.y+WORLD.height-margin) }, radius: radiusFromMass(80), mass: 80, color: `hsl(${Math.random()*360|0}, 70%, 60%)`, vel: { x:0, y:0 }, mergeCooldown: 3.0 }]
       };
       gameState.players.set(playerId, playerData);
       try { ws.send(JSON.stringify({ type: 'initialWorld', pellets: Array.from(gameState.pellets.values()), viruses: Array.from(gameState.viruses.values()), powerUps: Array.from(gameState.powerUps.values()), bullets: Array.from(gameState.bullets.values()), blackhole: gameState.blackhole, yourPlayerId: playerId, worldBounds: gameState.worldBounds })); } catch {}

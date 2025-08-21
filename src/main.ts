@@ -113,7 +113,8 @@ function mountMenu() {
             (window as any).ncWs = ws;
             ws.addEventListener('open', ()=>{
               const name = cfg.name || 'Player';
-              try { ws.send(JSON.stringify({ type: 'joinShared', name })); } catch {}
+              const skin = (cfg as any).skinCanvas ? 'custom' : null; // placeholder flag; server can later fetch more details if needed
+              try { ws.send(JSON.stringify({ type: 'joinShared', name, skin })); } catch {}
               sharedClient!.setWebSocket(ws);
               showTopNotice('🟢 Verbunden (Server-Classic)');
             });

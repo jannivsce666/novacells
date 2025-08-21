@@ -7,6 +7,7 @@ import { LevelDesign } from './LevelDesign';
 export interface SharedPlayer {
   id: number;
   name: string;
+  skin?: any;
   cells: Array<{
     pos: { x: number; y: number };
     radius: number;
@@ -294,6 +295,12 @@ export class SharedGameClient {
     this.camera.x = cx / Math.max(1, totalMass);
     this.camera.y = cy / Math.max(1, totalMass);
 
+    // Clamp camera to bounds so spawn doesn’t look outside
+    const halfW = (this.canvas.width/2) / Math.max(0.0001, this.camera.zoom);
+    const halfH = (this.canvas.height/2) / Math.max(0.0001, this.camera.zoom);
+    this.camera.x = Math.max(this.worldBounds.x + halfW, Math.min(this.worldBounds.x + this.worldBounds.width - halfW, this.camera.x));
+    this.camera.y = Math.max(this.worldBounds.y + halfH, Math.min(this.worldBounds.y + this.worldBounds.height - halfH, this.camera.y));
+
     // Calculate zoom based on mass
     const canvas = this.canvas;
     const screenAspect = canvas.width / canvas.height;
@@ -376,7 +383,7 @@ export class SharedGameClient {
       ctx.fill();
     }
 
-    // Render powerups
+    // Render powerups (larger symbols and glow)
     for (const pu of this.powerUps.values()) {
       let fill = '#fff'; let label = '';
       switch (pu.type) {
@@ -386,9 +393,11 @@ export class SharedGameClient {
         case 'magnet': fill = '#a78bfa'; label = 'U'; break;
         case 'lightning': fill = '#f472b6'; label = '⚡'; break;
       }
-      ctx.fillStyle = fill; ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(pu.x, pu.y, 16, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#0b1028'; ctx.font = 'bold 16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.shadowColor = fill; ctx.shadowBlur = 20;
+      ctx.fillStyle = fill; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(pu.x, pu.y, 18, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#0b1028'; ctx.font = 'bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillText(label, pu.x, pu.y+1);
     }
 
@@ -415,10 +424,11 @@ export class SharedGameClient {
       ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, Math.max(3, Math.sqrt(b.mass)*0.6), 0, Math.PI*2); ctx.fill();
     }
 
-    // Render all players
+    // Render all players with skin
     for (const player of this.players.values()) {
       const isMe = player.id === this.playerId;
       for (const cell of player.cells) {
+        // Fill with color; if player.skin has pattern/image later, we can draw it here.
         ctx.fillStyle = cell.color;
         ctx.strokeStyle = isMe ? '#FFFFFF' : 'rgba(255,255,255,0.3)';
         ctx.lineWidth = isMe ? 4 : 2;
