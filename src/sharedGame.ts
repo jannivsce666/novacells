@@ -2,6 +2,7 @@
 import { clamp, rand, randInt, norm, radiusFromMass, speedFromMass, sum } from './utils';
 import type { PlayerState, Pellet, Virus, PowerUp, PowerUpType, Bullet, Cell, PlayerConfig } from './types';
 import type { InputState } from './input';
+import { LevelDesign } from './LevelDesign';
 
 export interface SharedPlayer {
   id: number;
@@ -57,11 +58,14 @@ export class SharedGameClient {
   private isMobile = false;
   private lastFrameTime = 0;
   private frameDelta = 0;
-  
+  private level: LevelDesign; // classic background & border
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.isMobile = this.detectMobile();
     this.setupEventListeners();
+    this.level = new LevelDesign(this.canvas);
+    window.addEventListener('resize', () => this.level.onResize());
   }
 
   private detectMobile(): boolean {
@@ -265,20 +269,23 @@ export class SharedGameClient {
     // Update camera
     this.updateCamera();
 
-    // Clear canvas
+    // Clear canvas and draw classic galaxy background
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Background
-    ctx.fillStyle = '#001122';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    this.level.drawBackgroundScreen(ctx);
 
     // Set up world transform
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.scale(this.camera.zoom, this.camera.zoom);
     ctx.translate(-this.camera.x, -this.camera.y);
+
+    // Draw classic rainbow border for world
+    ctx.save();
+    ctx.translate(this.worldBounds.x, this.worldBounds.y);
+    this.level.drawRainbowBorder(ctx, 80, { w: this.worldBounds.width, h: this.worldBounds.height });
+    ctx.restore();
 
     // Render pellets
     for (const pellet of this.pellets.values()) {
@@ -290,8 +297,8 @@ export class SharedGameClient {
 
     // Render viruses
     for (const virus of this.viruses.values()) {
-      ctx.fillStyle = '#00FF00';
-      ctx.strokeStyle = '#008800';
+      ctx.fillStyle = '#00FFAA';
+      ctx.strokeStyle = '#00C08A';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(virus.x, virus.y, virus.radius, 0, Math.PI * 2);
@@ -302,22 +309,17 @@ export class SharedGameClient {
     // Render all players
     for (const player of this.players.values()) {
       const isMe = player.id === this.playerId;
-      
       for (const cell of player.cells) {
-        // Draw cell
         ctx.fillStyle = cell.color;
         ctx.strokeStyle = isMe ? '#FFFFFF' : 'rgba(255,255,255,0.3)';
         ctx.lineWidth = isMe ? 4 : 2;
-        
         ctx.beginPath();
         ctx.arc(cell.pos.x, cell.pos.y, cell.radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-
-        // Draw player name
         if (cell.radius > 15) {
           ctx.fillStyle = isMe ? '#FFFFFF' : '#CCCCCC';
-          ctx.font = `${Math.min(20, cell.radius * 0.4)}px Arial`;
+          ctx.font = `${Math.min(20, cell.radius * 0.4)}px system-ui, Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(player.name, cell.pos.x, cell.pos.y);
@@ -327,7 +329,7 @@ export class SharedGameClient {
 
     ctx.restore(); // End world transform
 
-    // UI Elements
+    // UI Elements similar to classic
     this.renderUI(ctx);
 
     ctx.restore();

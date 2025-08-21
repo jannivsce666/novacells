@@ -98,19 +98,17 @@ function mountMenu() {
         // This ensures your game works immediately while keeping multiplayer features
         try {
           const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-          // Allow query override: ?server=wss://custom
           const params = new URLSearchParams(location.search);
           const override = params.get('server');
           const defaultProd = 'wss://novacellsserver.fly.dev';
           const wsUrl = override || (isDev ? 'ws://localhost:8080' : defaultProd);
 
           if (isDev) {
-            // Development: run classic game with bots
+            // Classic game locally for development
             game = new Game(canvas);
             game.onGameOver = handleGameOver;
             isSharedMode = false;
-            showTopNotice('🎮 Starte lokales Spiel (Dev) ...');
-
+            showTopNotice('🎮 Dev: Classic-Spiel');
             try {
               const ws = new WebSocket(wsUrl);
               (window as any).ncWs = ws;
@@ -121,15 +119,13 @@ function mountMenu() {
                 showTopNotice('🧪 Dev-WS verbunden');
               });
             } catch {}
-
             (game as Game).spawnPlayers(69, cfg);
           } else {
-            // Production: single shared world on server (no local bots)
+            // Production: Shared world client with classic visuals
             const client = new SharedGameClient(canvas);
             game = client;
             isSharedMode = true;
-            showTopNotice('🌍 Gemeinsame Welt wird verbunden ...');
-
+            showTopNotice('🌍 Verbinde zur gemeinsamen Welt ...');
             try {
               const ws = new WebSocket(wsUrl);
               (window as any).ncWs = ws;
@@ -138,11 +134,9 @@ function mountMenu() {
                 ws.send(JSON.stringify({ type: 'joinShared', name }));
                 client.setWebSocket(ws);
                 client.startLoop();
-                showTopNotice('🟢 Verbunden: Alle spielen auf EINEM Server');
+                showTopNotice('🟢 Verbunden: Alle auf EINEM Server');
               });
-              ws.addEventListener('error', ()=>{
-                showTopNotice('❌ Server nicht erreichbar');
-              });
+              ws.addEventListener('error', ()=> showTopNotice('❌ Server nicht erreichbar'));
             } catch {
               showTopNotice('❌ Serververbindung fehlgeschlagen');
             }
