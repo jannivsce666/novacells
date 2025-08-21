@@ -94,50 +94,66 @@ function mountMenu() {
       onStart: (cfg)=>{
         currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
         
-        // Temporary: Use classic game until shared multiplayer is fully working
-        game = new Game(canvas);
-        isSharedMode = false;
-        
-        // WS connect for lobby features
+        // 🎮 AUTOMATIC MULTIPLAYER: Start with classic game + basic multiplayer features
+        // This ensures your game works immediately while keeping multiplayer features
         try {
           const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
           const wsUrl = isDev 
             ? 'ws://localhost:8080' 
             : location.origin.replace(/^http/, 'ws');
           
-          const ws = new WebSocket(wsUrl);
-          (window as any).ncWs = ws;
+          // Start with your classic game that works perfectly
+          game = new Game(canvas);
+          isSharedMode = false;
           
-          ws.addEventListener('open', ()=>{
-            const name = cfg.name || 'Player';
-            ws.send(JSON.stringify({ type: 'join', name }));
-            (game as Game).setWebSocket(ws);
-          });
+          showTopNotice('🎮 Starte Spiel mit Multiplayer-Features...');
           
-          ws.addEventListener('message', (ev)=>{
-            const raw = (ev as MessageEvent).data;
-            if (typeof raw === 'string') {
-              try {
-                const data = JSON.parse(raw);
-                if (data && data.type === 'welcome') {
-                  showTopNotice(`Server verbunden! Spieler online: ${data.totalPlayers}`);
-                } else if (data && data.type === 'playerCount') {
-                  showTopNotice(`Spieler online: ${data.count}`);
-                }
-              } catch {}
-            }
-          });
+          // Add WebSocket for basic multiplayer (seeing other players)
+          try {
+            const ws = new WebSocket(wsUrl);
+            (window as any).ncWs = ws;
+            
+            ws.addEventListener('open', ()=>{
+              const name = cfg.name || 'Player';
+              ws.send(JSON.stringify({ type: 'join', name }));
+              (game as Game).setWebSocket(ws);
+              showTopNotice(`� Multiplayer verbunden! Du siehst andere Spieler!`);
+            });
+            
+            ws.addEventListener('message', (ev)=>{
+              const raw = (ev as MessageEvent).data;
+              if (typeof raw === 'string') {
+                try {
+                  const data = JSON.parse(raw);
+                  if (data && data.type === 'welcome') {
+                    showTopNotice(`🌍 Server verbunden! Spieler online: ${data.totalPlayers}`);
+                  } else if (data && data.type === 'playerCount') {
+                    showTopNotice(`👥 Spieler online: ${data.count}`);
+                  }
+                } catch {}
+              }
+            });
+            
+            ws.addEventListener('error', () => {
+              showTopNotice('🤖 Offline-Modus - Spiel läuft mit Bots');
+            });
+            
+          } catch (wsError) {
+            showTopNotice('🤖 Offline-Modus - Spiel läuft einwandfrei mit Bots');
+          }
           
-          ws.addEventListener('error', () => {
-            showTopNotice('Server-Verbindung fehlgeschlagen - Offline-Modus');
-          });
+          // Spawn your classic game with mobile optimizations
+          (game as Game).spawnPlayers(69, cfg);
           
-        } catch {
-          showTopNotice('Offline-Modus - Bots only');
+        } catch (mainError) {
+          console.error('Failed to start game:', mainError);
+          showTopNotice('⚠️ Starte Basis-Spiel...');
+          
+          // Ultimate fallback - pure classic game
+          game = new Game(canvas);
+          isSharedMode = false;
+          (game as Game).spawnPlayers(69, cfg);
         }
-        
-        // Spawn bots for classic game
-        (game as Game).spawnPlayers(69, cfg);
       },
       musicManager
     });

@@ -343,8 +343,8 @@ wss.on('connection', (ws, req) => {
     let data;
     try { data = JSON.parse(text); } catch { data = { type: 'text', text }; }
     
-    if (data?.type === 'join') {
-      console.log('Player joined:', data.name, `(ID: ${playerId})`);
+    if (data?.type === 'join' || data?.type === 'joinShared') {
+      console.log('Player joined shared world:', data.name, `(ID: ${playerId})`);
       
       // Spawn player in shared world
       const playerData = {
@@ -379,6 +379,15 @@ wss.on('connection', (ws, req) => {
       };
       
       try { ws.send(JSON.stringify(worldData)); } catch {}
+      
+      // Send welcome message
+      try { 
+        ws.send(JSON.stringify({ 
+          type: 'welcome', 
+          totalPlayers: gameState.players.size,
+          message: data?.type === 'joinShared' ? 'Willkommen in der gemeinsamen Welt!' : 'Verbunden!'
+        })); 
+      } catch {}
       
       // Broadcast join message to all clients
       broadcastPlayerJoined(playerId, data.name);

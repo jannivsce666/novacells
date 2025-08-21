@@ -352,6 +352,21 @@ export class SharedGameClient {
     ctx.fillText(status, 20, 100);
   }
 
+  // Start the game loop
+  startLoop() {
+    const loop = (timestamp: number) => {
+      this.frameDelta = timestamp - this.lastFrameTime;
+      this.lastFrameTime = timestamp;
+      
+      this.updateCamera();
+      this.render(this.frameDelta);
+      
+      requestAnimationFrame(loop);
+    };
+    
+    requestAnimationFrame(loop);
+  }
+
   // Public API for integration
   getPlayerId() {
     return this.playerId;
