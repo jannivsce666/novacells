@@ -103,51 +103,50 @@ function mountMenu() {
           const override = params.get('server');
           const defaultProd = 'wss://novacellsserver.fly.dev';
           const wsUrl = override || (isDev ? 'ws://localhost:8080' : defaultProd);
-          
-          // Start with your classic game that works perfectly
-          game = new Game(canvas);
-          game.onGameOver = handleGameOver; // Set the game over handler
-          isSharedMode = false;
-          
-          showTopNotice('🎮 Starte Spiel mit Multiplayer-Features...');
-          
-          // Add WebSocket for basic multiplayer (seeing other players)
-          try {
-            const ws = new WebSocket(wsUrl);
-            (window as any).ncWs = ws;
-            
-            ws.addEventListener('open', ()=>{
-              const name = cfg.name || 'Player';
-              ws.send(JSON.stringify({ type: 'join', name }));
-              (game as Game).setWebSocket(ws);
-              showTopNotice(`� Multiplayer verbunden! Du siehst andere Spieler!`);
-            });
-            
-            ws.addEventListener('message', (ev)=>{
-              const raw = (ev as MessageEvent).data;
-              if (typeof raw === 'string') {
-                try {
-                  const data = JSON.parse(raw);
-                  if (data && data.type === 'welcome') {
-                    showTopNotice(`🌍 Server verbunden! Spieler online: ${data.totalPlayers}`);
-                  } else if (data && data.type === 'playerCount') {
-                    showTopNotice(`👥 Spieler online: ${data.count}`);
-                  }
-                } catch {}
-              }
-            });
-            
-            ws.addEventListener('error', () => {
-              showTopNotice('🤖 Offline-Modus - Spiel läuft mit Bots');
-            });
-            
-          } catch (wsError) {
-            showTopNotice('🤖 Offline-Modus - Spiel läuft einwandfrei mit Bots');
+
+          if (isDev) {
+            // Development: run classic game with bots
+            game = new Game(canvas);
+            game.onGameOver = handleGameOver;
+            isSharedMode = false;
+            showTopNotice('🎮 Starte lokales Spiel (Dev) ...');
+
+            try {
+              const ws = new WebSocket(wsUrl);
+              (window as any).ncWs = ws;
+              ws.addEventListener('open', ()=>{
+                const name = cfg.name || 'Player';
+                ws.send(JSON.stringify({ type: 'join', name }));
+                (game as Game).setWebSocket(ws);
+                showTopNotice('🧪 Dev-WS verbunden');
+              });
+            } catch {}
+
+            (game as Game).spawnPlayers(69, cfg);
+          } else {
+            // Production: single shared world on server (no local bots)
+            const client = new SharedGameClient(canvas);
+            game = client;
+            isSharedMode = true;
+            showTopNotice('🌍 Gemeinsame Welt wird verbunden ...');
+
+            try {
+              const ws = new WebSocket(wsUrl);
+              (window as any).ncWs = ws;
+              ws.addEventListener('open', ()=>{
+                const name = cfg.name || 'Player';
+                ws.send(JSON.stringify({ type: 'joinShared', name }));
+                client.setWebSocket(ws);
+                client.startLoop();
+                showTopNotice('🟢 Verbunden: Alle spielen auf EINEM Server');
+              });
+              ws.addEventListener('error', ()=>{
+                showTopNotice('❌ Server nicht erreichbar');
+              });
+            } catch {
+              showTopNotice('❌ Serververbindung fehlgeschlagen');
+            }
           }
-          
-          // Spawn your classic game with mobile optimizations
-          (game as Game).spawnPlayers(69, cfg);
-          
         } catch (mainError) {
           console.error('Failed to start game:', mainError);
           showTopNotice('⚠️ Starte Basis-Spiel...');
