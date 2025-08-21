@@ -98,9 +98,11 @@ function mountMenu() {
         // This ensures your game works immediately while keeping multiplayer features
         try {
           const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-          const wsUrl = isDev 
-            ? 'ws://localhost:8080' 
-            : location.origin.replace(/^http/, 'ws');
+          // Allow query override: ?server=wss://custom
+          const params = new URLSearchParams(location.search);
+          const override = params.get('server');
+          const defaultProd = 'wss://novacellsserver.fly.dev';
+          const wsUrl = override || (isDev ? 'ws://localhost:8080' : defaultProd);
           
           // Start with your classic game that works perfectly
           game = new Game(canvas);
