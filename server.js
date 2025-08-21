@@ -10,6 +10,8 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, 'dist');
 app.use(express.static(distDir));
+// Serve raw music assets from repo folder
+app.use('/music', express.static(path.join(__dirname, 'music')));
 
 // health check
 app.get('/health', (req, res) => res.send('ok'));
