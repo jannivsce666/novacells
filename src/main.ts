@@ -94,11 +94,11 @@ function mountMenu() {
       onStart: (cfg)=>{
         currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
         
-        // Always use shared multiplayer mode for now
-        game = new SharedGameClient(canvas);
-        isSharedMode = true;
+        // Temporary: Use classic game until shared multiplayer is fully working
+        game = new Game(canvas);
+        isSharedMode = false;
         
-        // Connect to server
+        // WS connect for lobby features
         try {
           const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
           const wsUrl = isDev 
@@ -111,17 +111,33 @@ function mountMenu() {
           ws.addEventListener('open', ()=>{
             const name = cfg.name || 'Player';
             ws.send(JSON.stringify({ type: 'join', name }));
-            (game as SharedGameClient).setWebSocket(ws);
-            showTopNotice(`🌍 Geteilte Welt betreten! Spieler: ${cfg.name}`);
+            (game as Game).setWebSocket(ws);
+          });
+          
+          ws.addEventListener('message', (ev)=>{
+            const raw = (ev as MessageEvent).data;
+            if (typeof raw === 'string') {
+              try {
+                const data = JSON.parse(raw);
+                if (data && data.type === 'welcome') {
+                  showTopNotice(`Server verbunden! Spieler online: ${data.totalPlayers}`);
+                } else if (data && data.type === 'playerCount') {
+                  showTopNotice(`Spieler online: ${data.count}`);
+                }
+              } catch {}
+            }
           });
           
           ws.addEventListener('error', () => {
-            showTopNotice('Server-Verbindung fehlgeschlagen - Versuche erneut');
+            showTopNotice('Server-Verbindung fehlgeschlagen - Offline-Modus');
           });
           
         } catch {
-          showTopNotice('Verbindung fehlgeschlagen - Prüfe Internetverbindung');
+          showTopNotice('Offline-Modus - Bots only');
         }
+        
+        // Spawn bots for classic game
+        (game as Game).spawnPlayers(69, cfg);
       },
       musicManager
     });
