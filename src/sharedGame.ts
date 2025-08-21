@@ -31,6 +31,20 @@ export interface SharedVirus {
   y: number;
   radius: number;
   mass: number;
+  kind?: 'green' | 'red';
+  ang?: number;
+  spin?: number;
+  ttl?: number;
+}
+
+// New: bullets from server
+interface SharedBullet {
+  id: number;
+  pos: { x: number; y: number };
+  vel: { x: number; y: number };
+  mass: number;
+  owner: 'hazard' | 'player';
+  ttl: number;
 }
 
 export class SharedGameClient {
@@ -43,6 +57,7 @@ export class SharedGameClient {
   private pellets: Map<number, SharedPellet> = new Map();
   private viruses: Map<number, SharedVirus> = new Map();
   private powerUps: Map<number, any> = new Map();
+  private bullets: Map<number, SharedBullet> = new Map();
   private worldBounds = { x: -3000, y: -3000, width: 6000, height: 6000 };
   
   // Camera and rendering
@@ -61,6 +76,9 @@ export class SharedGameClient {
   private level: LevelDesign; // classic background & border
 
   private ejectInterval?: number;
+
+  // Blackhole
+  private blackhole: { x: number; y: number; radius: number; pullRadius: number; active: boolean; imploding?: boolean } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -165,15 +183,19 @@ export class SharedGameClient {
         this.worldBounds = data.worldBounds;
         this.updatePellets(data.pellets);
         this.updateViruses(data.viruses);
-        this.updatePowerUps(data.powerUps);
+        this.updatePowerUps(data.powerUps || []);
+        this.updateBullets(data.bullets || []);
+        this.blackhole = data.blackhole || null;
         console.log(`🌍 Connected to shared world as Player ${this.playerId}`);
         break;
 
       case 'worldState':
-        this.updatePlayers(data.players);
-        this.updatePellets(data.pellets);
-        this.updateViruses(data.viruses);
-        this.updatePowerUps(data.powerUps);
+        this.updatePlayers(data.players || []);
+        this.updatePellets(data.pellets || []);
+        this.updateViruses(data.viruses || []);
+        this.updatePowerUps(data.powerUps || []);
+        this.updateBullets(data.bullets || []);
+        this.blackhole = data.blackhole || null;
         break;
 
       case 'pelletEaten':
@@ -212,7 +234,7 @@ export class SharedGameClient {
   private updateViruses(virusData: SharedVirus[]) {
     this.viruses.clear();
     for (const virus of virusData) {
-      this.viruses.set(virus.id, virus);
+      this.viruses.set(virus.id as any, virus as any);
     }
   }
 
@@ -221,6 +243,11 @@ export class SharedGameClient {
     for (const powerUp of powerUpData) {
       this.powerUps.set(powerUp.id, powerUp);
     }
+  }
+
+  private updateBullets(bulletData: SharedBullet[]) {
+    this.bullets.clear();
+    for (const b of bulletData) this.bullets.set(b.id, b);
   }
 
   private sendInput() {
@@ -328,6 +355,19 @@ export class SharedGameClient {
     this.level.drawRainbowBorder(ctx, 80, { w: this.worldBounds.width, h: this.worldBounds.height });
     ctx.restore();
 
+    // Blackhole
+    if (this.blackhole && this.blackhole.active) {
+      const bh = this.blackhole;
+      const g = ctx.createRadialGradient(bh.x, bh.y, Math.max(8, bh.radius * 0.2), bh.x, bh.y, bh.radius);
+      g.addColorStop(0, 'rgba(0,0,0,0.95)');
+      g.addColorStop(0.7, 'rgba(10,10,30,0.6)');
+      g.addColorStop(1, 'rgba(10,10,30,0.0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, bh.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // Render pellets
     for (const pellet of this.pellets.values()) {
       ctx.fillStyle = pellet.color;
@@ -336,15 +376,43 @@ export class SharedGameClient {
       ctx.fill();
     }
 
-    // Render viruses
+    // Render powerups
+    for (const pu of this.powerUps.values()) {
+      let fill = '#fff'; let label = '';
+      switch (pu.type) {
+        case 'star': fill = '#fcd34d'; label = '★'; break;
+        case 'multishot': fill = '#60a5fa'; label = '×'; break;
+        case 'grow': fill = '#34d399'; label = '+'; break;
+        case 'magnet': fill = '#a78bfa'; label = 'U'; break;
+        case 'lightning': fill = '#f472b6'; label = '⚡'; break;
+      }
+      ctx.fillStyle = fill; ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(pu.x, pu.y, 16, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#0b1028'; ctx.font = 'bold 16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(label, pu.x, pu.y+1);
+    }
+
+    // Render viruses (green/red)
     for (const virus of this.viruses.values()) {
-      ctx.fillStyle = '#00FFAA';
-      ctx.strokeStyle = '#00C08A';
+      const isRed = (virus as any).kind === 'red';
+      if (isRed) {
+        ctx.fillStyle = '#ff375f';
+        ctx.strokeStyle = '#ff99ad';
+      } else {
+        ctx.fillStyle = '#00FFAA';
+        ctx.strokeStyle = '#00C08A';
+      }
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(virus.x, virus.y, virus.radius, 0, Math.PI * 2);
+      ctx.arc((virus as any).x, (virus as any).y, (virus as any).radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+    }
+
+    // Render bullets
+    for (const b of this.bullets.values()) {
+      ctx.fillStyle = b.owner === 'hazard' ? '#ffd166' : '#a3e635';
+      ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, Math.max(3, Math.sqrt(b.mass)*0.6), 0, Math.PI*2); ctx.fill();
     }
 
     // Render all players
