@@ -166,3 +166,68 @@ export async function purchaseSkin(uid:string, skinId:string, cost:number): Prom
     return { ok:false, reason:'error' };
   }
 }
+
+export async function unlockRandomPremiumSkin(uid: string): Promise<{ ok: true; skinId: string; skinName: string } | { ok: false; reason: string }> {
+  try {
+    // List of all premium skins
+    const premiumSkins = [
+      { id: '1', name: 'Premium Skin 1' },
+      { id: '3', name: 'Premium Skin 3' },
+      { id: '4', name: 'Premium Skin 4' },
+      { id: '5', name: 'Premium Skin 5' },
+      { id: 'dergott', name: 'Der Gott' },
+      { id: 'enkhi', name: 'Enkhi' },
+      { id: 'gaia', name: 'Gaia' },
+      { id: 'galaxy', name: 'Galaxy' },
+      { id: 'goettin', name: 'Göttin' },
+      { id: 'mihi', name: 'Mihi' },
+      { id: 'zeus', name: 'Zeus' }
+    ];
+
+    const userRef = ref(db, `users/${uid}`);
+    
+    const res = await runTransaction(userRef, (current) => {
+      const obj = (current && typeof current === 'object') ? { ...current as any } : {} as any;
+      obj.skins = obj.skins || {};
+      
+      // Find skins not yet owned
+      const unownedSkins = premiumSkins.filter(skin => !obj.skins[skin.id]);
+      
+      if (unownedSkins.length === 0) {
+        // All premium skins already owned - return special marker
+        obj._noSkinsToUnlock = true;
+        return obj;
+      }
+      
+      // Pick a random unowned skin
+      const randomSkin = unownedSkins[Math.floor(Math.random() * unownedSkins.length)];
+      
+      // Store the selected skin info for return
+      obj._unlockedSkin = randomSkin;
+      
+      // Unlock the skin
+      obj.skins[randomSkin.id] = true;
+      
+      return obj;
+    });
+
+    if (!res.committed) {
+      return { ok: false, reason: 'transaction-failed' };
+    }
+
+    const result = res.snapshot?.val();
+    if (result?._noSkinsToUnlock) {
+      return { ok: false, reason: 'all-skins-owned' };
+    }
+
+    const unlockedSkin = result?._unlockedSkin;
+    if (!unlockedSkin) {
+      return { ok: false, reason: 'no-skin-unlocked' };
+    }
+
+    return { ok: true, skinId: unlockedSkin.id, skinName: unlockedSkin.name };
+  } catch (e) {
+    console.error('Error unlocking random premium skin:', e);
+    return { ok: false, reason: 'error' };
+  }
+}

@@ -15,6 +15,38 @@ const musicManager = new MusicManager();
 bindInput(canvas);
 setMusicManager(musicManager);
 
+// Setup Level-Up Rewards: 100 coins per level up
+(async () => {
+  try {
+    const { setHooks } = await import('./xp');
+    setHooks({
+      onLevelUp: (newLevel: number) => {
+        // Award 100 coins for each level up
+        const currentCoins = getLocalCoins();
+        const newCoins = currentCoins + 100;
+        setLocalCoins(newCoins);
+        showTopNotice(`🎉 Level ${newLevel}! +100 Coins`);
+        
+        // Update menu coin display if available
+        const menu = (window as any).currentMenu;
+        if (menu && typeof menu.setCoins === 'function') {
+          menu.setCoins(newCoins);
+        }
+        
+        // Mark that player has a level-up reward to claim
+        localStorage.setItem('neoncells.levelUpReward', 'true');
+        
+        // Make star button glow if menu is available
+        if (menu && typeof menu.updateStarButton === 'function') {
+          menu.updateStarButton();
+        }
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to setup level-up rewards:', error);
+  }
+})();
+
 let currentSkinCanvas: HTMLCanvasElement | undefined;
 
 // Kleine gelbe Top-Notification
@@ -58,30 +90,53 @@ function mountMenu() {
         currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
         // WS connect
         try {
-          const wsUrl = (location.origin.replace(/^http/, 'ws'));
+          // Connect to WebSocket server (development: port 8080, production: same origin)
+          const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+          const wsUrl = isDev 
+            ? 'ws://localhost:8080' 
+            : location.origin.replace(/^http/, 'ws');
+          
           const ws = new WebSocket(wsUrl);
           (window as any).ncWs = ws;
+          
           ws.addEventListener('open', ()=>{
             const name = cfg.name || 'Player';
             ws.send(JSON.stringify({ type: 'join', name }));
+            
+            // Pass WebSocket to game for bot management
+            game.setWebSocket(ws);
           });
+          
           ws.addEventListener('message', (ev)=>{
             const raw = (ev as MessageEvent).data;
             if (typeof raw === 'string') {
               try {
                 const data = JSON.parse(raw);
                 if (data && data.type === 'welcome') {
-                  showTopNotice('server erfolgreich gejoined');
+                  showTopNotice(`Server verbunden! Spieler online: ${data.totalPlayers}`);
+                } else if (data && data.type === 'playerCount') {
+                  showTopNotice(`Spieler online: ${data.count}`);
                 }
               } catch {}
             }
           });
-        } catch {}
+          
+          ws.addEventListener('error', () => {
+            showTopNotice('Server-Verbindung fehlgeschlagen - Offline-Modus');
+          });
+          
+        } catch {
+          showTopNotice('Offline-Modus - Bots only');
+        }
+        
         // Start game
         game.spawnPlayers(69, cfg);
       },
       musicManager
     });
+    
+    // Make menu globally available for coin updates
+    (window as any).currentMenu = menu;
   }
   try { menu.show(); } catch {}
 }
@@ -146,12 +201,8 @@ onAuthStateChanged(auth, async (user)=>{
 
 function awardCoinsForScore(maxMass:number): number {
   const m = Math.floor(maxMass);
-  if (m < 100) return 10;
-  if (m >= 500 && m <= 1000) return 100;
-  if (m >= 1001 && m <= 5000) return 500;
-  if (m >= 5001 && m <= 10000) return 2000;
-  if (m > 10000) return 2000 + Math.floor((m - 10000) / 100) * 10;
-  return 0;
+  // Award 5 coins per 150 mass
+  return Math.floor(m / 150) * 5;
 }
 
 // Get last match results for start menu display
@@ -198,6 +249,22 @@ game.onGameOver = async (stats)=>{
   showGameOver(stats as any);
 };
 
+// Coins utility functions for game over revival
+function getLocalCoins(): number {
+  try {
+    const v = localStorage.getItem('neoncells.coins');
+    return v ? Math.max(0, parseInt(v)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setLocalCoins(amount: number) {
+  try {
+    localStorage.setItem('neoncells.coins', String(Math.max(0, Math.floor(amount))));
+  } catch {}
+}
+
 function showGameOver(stats:any){
   const overlay = document.createElement('div');
   Object.assign(overlay.style, {
@@ -215,9 +282,11 @@ function showGameOver(stats:any){
 
   const h = document.createElement('h2');
   h.textContent = 'GAME OVER';
+  h.style.marginBottom = '20px';
 
   const p = document.createElement('div');
-  p.innerHTML = `Max Größe: <b>${stats.maxMass}</b><br/>Zeit: <b>${stats.survivedSec}s</b>`;
+  p.innerHTML = `Max Größe: <b>${stats.maxMass}</b><br/>Zeit: <b>${stats.survivedSec}s</b><br/>Finale Masse: <b>${stats.finalMass || stats.maxMass}</b>`;
+  p.style.marginBottom = '20px';
 
   // Add XP information
   const xpDiv = document.createElement('div');
@@ -233,6 +302,87 @@ function showGameOver(stats:any){
     })();
   } catch {}
 
+  // Coins display
+  const currentCoins = getLocalCoins();
+  const coinsDiv = document.createElement('div');
+  coinsDiv.innerHTML = `💰 Coins: <b>${currentCoins}</b>`;
+  coinsDiv.style.margin = '15px 0';
+  coinsDiv.style.fontSize = '16px';
+
+  // Revival option (only if they have enough coins and died with significant mass)
+  const revivalCost = 500;
+  const finalMass = stats.finalMass || stats.maxMass;
+  const canRevive = currentCoins >= revivalCost && finalMass >= 100; // Only allow revival if died with 100+ mass
+
+  if (canRevive) {
+    const reviveSection = document.createElement('div');
+    reviveSection.style.margin = '20px 0';
+    reviveSection.style.padding = '15px';
+    reviveSection.style.background = 'rgba(34, 197, 94, 0.1)';
+    reviveSection.style.border = '2px solid rgba(34, 197, 94, 0.3)';
+    reviveSection.style.borderRadius = '12px';
+    
+    const reviveText = document.createElement('div');
+    reviveText.innerHTML = `🚀 <b>Wiedereinstieg möglich!</b><br/>Kosten: <b>${revivalCost} Coins</b><br/>Du startest mit <b>${finalMass} Masse</b>`;
+    reviveText.style.marginBottom = '15px';
+    
+    const reviveBtn = document.createElement('button');
+    reviveBtn.textContent = `💰 WIEDEREINSTEIGEN (${revivalCost} Coins)`;
+    reviveBtn.className = 'btn-space';
+    reviveBtn.style.background = 'linear-gradient(45deg, #22c55e, #16a34a)';
+    reviveBtn.style.border = 'none';
+    reviveBtn.style.color = 'white';
+    reviveBtn.style.fontWeight = 'bold';
+    reviveBtn.style.padding = '12px 20px';
+    reviveBtn.style.fontSize = '14px';
+    
+    reviveBtn.onclick = () => {
+      // Deduct coins
+      setLocalCoins(currentCoins - revivalCost);
+      
+      // Update menu coins if available
+      const menu = (window as any).currentMenu;
+      if (menu && menu.setCoins) {
+        menu.setCoins(currentCoins - revivalCost);
+      }
+      
+      // Revive with previous mass
+      game.reviveWithMass(finalMass);
+      
+      // Close overlay
+      overlay.remove();
+      
+      // Show success message
+      const successMsg = document.createElement('div');
+      successMsg.textContent = `🚀 Wiedereinstieg erfolgreich! -${revivalCost} Coins`;
+      successMsg.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(45deg, #22c55e, #16a34a);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 25px;
+        font-weight: bold;
+        z-index: 10000;
+        animation: slideDown 0.3s ease-out;
+      `;
+      document.body.appendChild(successMsg);
+      setTimeout(() => successMsg.remove(), 3000);
+    };
+    
+    reviveSection.append(reviveText, reviveBtn);
+    card.appendChild(reviveSection);
+  }
+
+  // Regular buttons
+  const buttonContainer = document.createElement('div');
+  buttonContainer.style.display = 'flex';
+  buttonContainer.style.gap = '15px';
+  buttonContainer.style.justifyContent = 'center';
+  buttonContainer.style.marginTop = '20px';
+
   const again = document.createElement('button');
   again.textContent = 'NOCHMAL';
   again.className = 'btn-space';
@@ -243,7 +393,10 @@ function showGameOver(stats:any){
   back.className = 'btn-space';
   back.onclick = ()=>{ overlay.remove(); mountMenu(); };
 
-  card.append(h,p,xpDiv,again,back); overlay.append(card); document.body.appendChild(overlay);
+  buttonContainer.append(again, back);
+  card.append(h, p, xpDiv, coinsDiv, buttonContainer);
+  overlay.append(card);
+  document.body.appendChild(overlay);
 }
 
 // --- In-game Rank HUD (1/x) ---

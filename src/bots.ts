@@ -134,7 +134,7 @@ export function updateBots(params: BotParams, world: WorldInfo, dt:number){
     const edgeDistanceNow = distToEdge(lc.pos, world.width, world.height, world.pad);
 
     const starMul = (bot.invincibleTimer>0) ? 2.0 : 1.0;
-    const lightningMul = (bot.invincibleTimer<=0 && ((bot as any).lightningTimer||0)>0) ? 2.0 : 1.0; // Only if not invincible
+    const lightningMul = (bot.invincibleTimer<=0 && ((bot as any).lightningTimer||0)>0) ? 1.44 : 1.0; // Only if not invincible (reduced to 1.44x)
     const boostMul = ((bot.speedBoostTimer||0)>0) ? 1.10 : 1.0;
     const vCap = botSpeed * starMul * lightningMul * boostMul; // identical to player cap by total mass
 

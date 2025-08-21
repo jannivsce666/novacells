@@ -39,6 +39,7 @@ export class StartMenu {
   private presetThumbs: HTMLCanvasElement[] = [];
   private coinEl?: HTMLDivElement;
   private userBadgeCanvas?: HTMLCanvasElement;
+  private starBtn?: HTMLButtonElement;
 
   constructor(private opts: StartMenuOptions){
     // Overlay root
@@ -309,17 +310,70 @@ export class StartMenu {
       }, 0);
     });
 
-    // Gifts small button (to the right)
-    const giftsSmall = document.createElement('button');
-    Object.assign(giftsSmall.style, {
+    // Star reward button (level-up rewards)
+    const starBtn = document.createElement('button');
+    Object.assign(starBtn.style, {
       width:'56px', height:'56px', padding:'0', border:'0', borderRadius:'50%',
-      background:'#60a5fa', color:'#052', cursor:'pointer', display:'grid', placeItems:'center',
-      boxShadow:'0 10px 18px rgba(96,165,250,.25)'
+      background:'#fbbf24', color:'#052', cursor:'pointer', display:'grid', placeItems:'center',
+      boxShadow:'0 10px 18px rgba(251,191,36,.25)', transition:'all 0.3s ease'
     } as CSSStyleDeclaration);
-    giftsSmall.title = 'Gifts';
-    giftsSmall.appendChild(makeSprite('gift'));
+    starBtn.title = 'Level-Up Belohnung';
+    starBtn.appendChild(makeSprite('gift')); // Using gift sprite as star placeholder
+    this.starBtn = starBtn;
+    
+    // Check if there's a level-up reward to claim
+    this.updateStarButton();
+    
+    // Star button click handler
+    starBtn.addEventListener('click', async (e) => {
+      e.preventDefault(); 
+      e.stopPropagation();
+      
+      // Check if there's a reward to claim
+      const hasReward = localStorage.getItem('neoncells.levelUpReward') === 'true';
+      if (!hasReward) {
+        // Show info about level-up rewards
+        this.showLevelUpInfo();
+        return;
+      }
+      
+      // Try to unlock a random premium skin
+      try {
+        const { auth } = await import('./firebase');
+        const user = auth.currentUser;
+        if (!user) {
+          alert('Bitte melde dich mit Google an, um Level-Up Belohnungen zu erhalten!');
+          return;
+        }
+        
+        starBtn.disabled = true;
+        starBtn.style.opacity = '0.6';
+        
+        const { unlockRandomPremiumSkin } = await import('./recordsCloud');
+        const result = await unlockRandomPremiumSkin(user.uid);
+        
+        if (result.ok) {
+          // Success! Show the skin they unlocked
+          localStorage.removeItem('neoncells.levelUpReward');
+          this.updateStarButton();
+          this.showSkinUnlockedDialog(result.skinId, result.skinName);
+        } else {
+          if (result.reason === 'all-skins-owned') {
+            alert('🎉 Du hast bereits alle Premium-Skins freigeschaltet! Keine weiteren Belohnungen verfügbar.');
+          } else {
+            alert('Fehler beim Freischalten des Skins. Versuche es später erneut.');
+          }
+        }
+      } catch (error) {
+        console.error('Error claiming level-up reward:', error);
+        alert('Ein Fehler ist aufgetreten. Versuche es später erneut.');
+      } finally {
+        starBtn.disabled = false;
+        starBtn.style.opacity = '1';
+      }
+    });
 
-    modesRow.append(startBtnVis, placeholderBtn, shopSmall, giftsSmall);
+    modesRow.append(startBtnVis, placeholderBtn, shopSmall, starBtn);
     ;(this as any).modesRow = modesRow;
 
     // Centered XP + Account under textbox
@@ -862,12 +916,231 @@ export class StartMenu {
       this.mobileOverlayEl = overlay;
 
       const onChange = ()=>{
-        if (window.innerWidth > window.innerHeight){ this.removeMobileLandscapeOverlay(); }
+        // Better orientation detection for iOS
+        setTimeout(() => {
+          const isLandscape = window.innerWidth > window.innerHeight;
+          if (isLandscape) { 
+            this.removeMobileLandscapeOverlay(); 
+          } else {
+            // Re-show if back to portrait
+            if (this.isTouchDevice() && !this.mobileOverlayEl) {
+              this.ensureMobileLandscapeOverlay();
+            }
+          }
+        }, 100); // Small delay for iOS orientation change
       };
+      
       window.addEventListener('resize', onChange);
       window.addEventListener('orientationchange', onChange);
-      this.mobileOverlayCleanup = ()=>{ window.removeEventListener('resize', onChange); window.removeEventListener('orientationchange', onChange); };
+      // iOS specific events
+      if (typeof window.orientation !== 'undefined') {
+        window.addEventListener('orientationchange', () => {
+          setTimeout(onChange, 500); // iOS needs more time
+        });
+      }
+      
+      this.mobileOverlayCleanup = ()=>{ 
+        window.removeEventListener('resize', onChange); 
+        window.removeEventListener('orientationchange', onChange); 
+      };
     }catch{}
+  }
+
+  private autoOptimizeMobile() {
+    try {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const isSmallScreen = window.innerWidth < 900 || window.innerHeight < 600;
+      
+      if (isPortrait || isSmallScreen) {
+        // Show an immediate, less intrusive prompt
+        this.showQuickMobilePrompt();
+      }
+    } catch {}
+  }
+
+  private showQuickMobilePrompt() {
+    // Remove any existing prompt
+    const existing = document.getElementById('quick-mobile-prompt');
+    if (existing) existing.remove();
+
+    const prompt = document.createElement('div');
+    prompt.id = 'quick-mobile-prompt';
+    Object.assign(prompt.style, {
+      position: 'fixed',
+      top: '20px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: '3000',
+      background: 'linear-gradient(45deg, #1e3a8a, #3730a3)',
+      color: '#fff',
+      padding: '12px 20px',
+      borderRadius: '25px',
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '14px',
+      fontWeight: '600',
+      boxShadow: '0 8px 25px rgba(0,0,0,0.4)',
+      border: '1px solid rgba(255,255,255,0.2)',
+      cursor: 'pointer',
+      animation: 'slideDown 0.3s ease-out',
+      backdropFilter: 'blur(10px)'
+    } as CSSStyleDeclaration);
+    
+    prompt.innerHTML = '📱 Für beste Performance → Querformat + Vollbild aktivieren';
+    
+    // Add animation keyframes
+    if (!document.getElementById('mobile-prompt-styles')) {
+      const style = document.createElement('style');
+      style.id = 'mobile-prompt-styles';
+      style.textContent = `
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes slideUp {
+          from { opacity: 1; transform: translateX(-50%) translateY(0); }
+          to { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+        }
+        @keyframes fadeOut {
+          0% { opacity: 1; }
+          80% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    prompt.onclick = async () => {
+      try {
+        // Detect iOS
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        
+        if (isIOS) {
+          // For iOS, show specific instructions
+          prompt.innerHTML = '📱 iOS: Drehe Gerät → Safari Adressleiste tippen → "AA" → Vollbildschirm';
+          prompt.style.background = 'linear-gradient(45deg, #f59e0b, #d97706)';
+          prompt.style.fontSize = '13px';
+          prompt.style.padding = '14px 18px';
+          
+          // Auto-hide after showing instructions
+          setTimeout(() => {
+            prompt.style.animation = 'slideUp 0.3s ease-in';
+            setTimeout(() => prompt.remove(), 300);
+          }, 6000);
+          
+          return;
+        }
+        
+        // For Android/other devices, try fullscreen API
+        const docElement = document.documentElement as any;
+        if (docElement.requestFullscreen) {
+          await docElement.requestFullscreen();
+        } else if (docElement.webkitRequestFullscreen) {
+          await docElement.webkitRequestFullscreen();
+        } else if (docElement.msRequestFullscreen) {
+          await docElement.msRequestFullscreen();
+        }
+        
+        // Store optimization preference
+        sessionStorage.setItem('mobileOptimized', 'true');
+        
+        // Show success message
+        prompt.innerHTML = '✅ Vollbild aktiviert! Drehe dein Gerät ins Querformat';
+        prompt.style.background = 'linear-gradient(45deg, #059669, #10b981)';
+        
+        // Auto-hide after success
+        setTimeout(() => {
+          prompt.style.animation = 'slideUp 0.3s ease-in';
+          setTimeout(() => prompt.remove(), 300);
+        }, 2000);
+        
+      } catch {
+        // If fullscreen fails, show manual instructions
+        prompt.innerHTML = '📱 Manuell: Drehe Gerät ins Querformat für beste Performance';
+        prompt.style.background = 'linear-gradient(45deg, #6366f1, #4f46e5)';
+        
+        setTimeout(() => {
+          prompt.style.animation = 'slideUp 0.3s ease-in';
+          setTimeout(() => prompt.remove(), 300);
+        }, 3000);
+      }
+    };
+    
+    document.body.appendChild(prompt);
+    
+    // Auto-hide after 8 seconds if not clicked
+    setTimeout(() => {
+      if (prompt.parentNode) {
+        prompt.style.animation = 'slideUp 0.3s ease-in';
+        setTimeout(() => prompt.remove(), 300);
+      }
+    }, 8000);
+  }
+
+  // Enhanced orientation and iOS fullscreen handling
+  private setupMobileOptimization() {
+    // Listen for orientation changes (iOS compatible)
+    const handleOrientationChange = () => {
+      setTimeout(() => {
+        const isPortrait = window.innerHeight > window.innerWidth;
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        
+        if (isPortrait && isIOS) {
+          // For iOS in portrait, show gentle reminder
+          this.showIOSOptimizationHint();
+        }
+        
+        // Trigger resize for canvas
+        window.dispatchEvent(new Event('resize'));
+      }, 100); // Small delay for iOS orientation change
+    };
+    
+    // Multiple event listeners for iOS compatibility
+    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleOrientationChange);
+    
+    // Initial check on load
+    setTimeout(() => {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      
+      if (isPortrait && (isIOS || isMobile)) {
+        this.autoOptimizeMobile();
+      }
+    }, 500);
+  }
+  
+  private showIOSOptimizationHint() {
+    // Don't show if already optimized or hint recently shown
+    if (sessionStorage.getItem('mobileOptimized') || sessionStorage.getItem('iosHintShown')) {
+      return;
+    }
+    
+    // Mark as shown for this session
+    sessionStorage.setItem('iosHintShown', 'true');
+    
+    const hint = document.createElement('div');
+    hint.innerHTML = '💡 Tipp: Querformat + Safari Vollbild für optimale Performance';
+    hint.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(45deg, #3b82f6, #1d4ed8);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 25px;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 10000;
+      animation: slideDown 0.3s ease-out, fadeOut 0.3s ease-in 3s;
+      box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+    `;
+    
+    document.body.appendChild(hint);
+    
+    // Auto remove after animation
+    setTimeout(() => hint.remove(), 3300);
   }
 
   private removeMobileLandscapeOverlay(){
@@ -882,6 +1155,16 @@ export class StartMenu {
     try { document.body.appendChild(this.root); } catch {}
     this.root.style.display = 'grid';
     this.root.style.pointerEvents = 'auto';
+
+    // Setup mobile optimization with iOS-specific handling
+    this.setupMobileOptimization();
+
+    // Auto-trigger mobile optimization on iPhone/Android
+    if (this.isTouchDevice()) {
+      setTimeout(() => {
+        this.autoOptimizeMobile();
+      }, 500);
+    }
 
     // Ensure layout and alignment run now the element is attached
     requestAnimationFrame(() => {
@@ -997,6 +1280,160 @@ export class StartMenu {
       const span = this.coinEl.querySelector('span');
       if (span) span.textContent = String(this.getCoins());
     }
+  }
+
+  updateStarButton() {
+    if (!this.starBtn) return;
+    
+    const hasReward = localStorage.getItem('neoncells.levelUpReward') === 'true';
+    if (hasReward) {
+      // Make button glow
+      this.starBtn.style.background = 'linear-gradient(45deg, #fbbf24, #f59e0b)';
+      this.starBtn.style.boxShadow = '0 0 20px rgba(251,191,36,0.6), 0 10px 18px rgba(251,191,36,.25)';
+      this.starBtn.style.animation = 'pulse 2s infinite';
+      this.starBtn.title = 'Level-Up Belohnung bereit!';
+      
+      // Add pulse animation if not exists
+      if (!document.getElementById('star-pulse-animation')) {
+        const style = document.createElement('style');
+        style.id = 'star-pulse-animation';
+        style.textContent = `
+          @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    } else {
+      // Normal state
+      this.starBtn.style.background = '#fbbf24';
+      this.starBtn.style.boxShadow = '0 10px 18px rgba(251,191,36,.25)';
+      this.starBtn.style.animation = 'none';
+      this.starBtn.title = 'Level-Up Belohnung';
+    }
+  }
+
+  showLevelUpInfo() {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '3000',
+      background: 'rgba(0,0,0,0.8)',
+      display: 'grid',
+      placeItems: 'center'
+    } as CSSStyleDeclaration);
+
+    const dialog = document.createElement('div');
+    Object.assign(dialog.style, {
+      background: 'linear-gradient(145deg, #1f2937, #111827)',
+      color: '#fff',
+      padding: '30px',
+      borderRadius: '16px',
+      maxWidth: '400px',
+      margin: '20px',
+      textAlign: 'center',
+      boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+      border: '1px solid rgba(255,255,255,0.1)'
+    } as CSSStyleDeclaration);
+
+    dialog.innerHTML = `
+      <div style="font-size: 48px; margin-bottom: 20px;">⭐</div>
+      <h2 style="margin: 0 0 15px 0; color: #fbbf24;">Level-Up Belohnungen</h2>
+      <p style="margin: 0 0 20px 0; line-height: 1.6; color: #d1d5db;">
+        Steige Levels auf um zufällige Premium-Skins freizuschalten!<br/>
+        <br/>
+        Der Stern leuchtet auf wenn eine Belohnung bereit ist.
+      </p>
+      <button id="info-close" style="
+        background: #fbbf24; 
+        color: #000; 
+        border: none; 
+        padding: 12px 24px; 
+        border-radius: 8px; 
+        font-weight: 600; 
+        cursor: pointer;
+        font-size: 14px;
+      ">Verstanden</button>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    document.getElementById('info-close')!.onclick = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  }
+
+  showSkinUnlockedDialog(skinId: string, skinName: string) {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '3000',
+      background: 'rgba(0,0,0,0.8)',
+      display: 'grid',
+      placeItems: 'center'
+    } as CSSStyleDeclaration);
+
+    const dialog = document.createElement('div');
+    Object.assign(dialog.style, {
+      background: 'linear-gradient(145deg, #1f2937, #111827)',
+      color: '#fff',
+      padding: '30px',
+      borderRadius: '16px',
+      maxWidth: '400px',
+      margin: '20px',
+      textAlign: 'center',
+      boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
+      border: '1px solid rgba(255,255,255,0.1)'
+    } as CSSStyleDeclaration);
+
+    dialog.innerHTML = `
+      <div style="font-size: 48px; margin-bottom: 20px;">🎉</div>
+      <h2 style="margin: 0 0 15px 0; color: #10b981;">Skin freigeschaltet!</h2>
+      <p style="margin: 0 0 20px 0; line-height: 1.6; color: #d1d5db;">
+        Du hast <strong style="color: #fbbf24;">${skinName}</strong> freigeschaltet!<br/>
+        <br/>
+        Der Skin ist jetzt in deiner Galerie verfügbar.
+      </p>
+      <div style="margin: 20px 0;">
+        <button id="open-skins" style="
+          background: #10b981; 
+          color: #000; 
+          border: none; 
+          padding: 12px 24px; 
+          border-radius: 8px; 
+          font-weight: 600; 
+          cursor: pointer;
+          font-size: 14px;
+          margin-right: 10px;
+        ">Skins öffnen</button>
+        <button id="reward-close" style="
+          background: #6b7280; 
+          color: #fff; 
+          border: none; 
+          padding: 12px 24px; 
+          border-radius: 8px; 
+          font-weight: 600; 
+          cursor: pointer;
+          font-size: 14px;
+        ">Schließen</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    document.getElementById('reward-close')!.onclick = () => overlay.remove();
+    document.getElementById('open-skins')!.onclick = () => {
+      overlay.remove();
+      // Open skins gallery
+      const skinsBtn = (this as any).skinsBtn;
+      if (skinsBtn) skinsBtn.click();
+    };
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   }
 }
 

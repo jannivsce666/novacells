@@ -105,6 +105,7 @@ type GameOverStats = {
   survivedMs: number;
   survivedSec: number;
   maxMass: number;
+  finalMass: number; // Mass at time of death for revival system
   score: number;
   rank: number;
   xpBreakdown?: any; // XP breakdown from the match
@@ -345,6 +346,59 @@ export class Game {
     const g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height)*0.6, canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height)*0.9);
     g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.35)'); ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
 
+    // Server messages overlay
+    this.drawServerMessages(ctx);
+
+    ctx.restore();
+  }
+
+  private drawServerMessages(ctx: CanvasRenderingContext2D) {
+    const now = Date.now();
+    // Remove expired messages
+    this.serverMessages = this.serverMessages.filter(msg => 
+      now - msg.timestamp < this.SERVER_MESSAGE_DURATION
+    );
+    
+    if (this.serverMessages.length === 0) return;
+    
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.font = '700 14px system-ui, sans-serif';
+    
+    const startY = 20;
+    const lineHeight = 25;
+    const padding = 12;
+    const maxWidth = 350;
+    
+    this.serverMessages.forEach((msg, index) => {
+      const y = startY + (index * lineHeight);
+      const age = now - msg.timestamp;
+      const fadeStart = this.SERVER_MESSAGE_DURATION - 1000; // Start fading 1 second before expiry
+      const alpha = age > fadeStart ? Math.max(0, 1 - (age - fadeStart) / 1000) : 1;
+      
+      // Background
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * alpha})`;
+      ctx.fillRect(10, y - 10, maxWidth, 20);
+      
+      // Border based on message type
+      let borderColor = 'rgba(100, 150, 200, 0.8)'; // Default blue
+      if (msg.type === 'join') {
+        borderColor = 'rgba(34, 197, 94, 0.8)'; // Green for joins
+      } else if (msg.type === 'leave') {
+        borderColor = 'rgba(239, 68, 68, 0.8)'; // Red for leaves
+      } else if (msg.type === 'playerCount') {
+        borderColor = 'rgba(168, 85, 247, 0.8)'; // Purple for count updates
+      }
+      
+      ctx.strokeStyle = borderColor.replace('0.8', String(alpha * 0.8));
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, y - 10, maxWidth, 20);
+      
+      // Text
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * alpha})`;
+      ctx.fillText(msg.text, 10 + padding, y + 2);
+    });
+    
     ctx.restore();
   }
 
@@ -490,7 +544,7 @@ export class Game {
       if (me?.alive) {
         let speedMul = (input as any).dash ? 1.22 : 1.0;
         if (me.invincibleTimer>0) speedMul *= 2.0;
-        else if ((me as any).lightningTimer > 0) speedMul *= 1.8; // Lightning 1.8x speed (20% slower than before)
+        else if ((me as any).lightningTimer > 0) speedMul *= 1.44; // Lightning 1.44x speed (20% slower than 1.8x)
         if ((me.speedBoostTimer||0) > 0) speedMul *= 1.10;
         for (const c of me.cells){
           const vCap = speedFromMass(Math.max(1, c.mass)) * speedMul;
@@ -557,7 +611,7 @@ export class Game {
           // Apply speed cap (higher for force returning cells)
           let mul = 1.0;
           if (p.invincibleTimer>0) mul *= 2.0;
-          else if ((p as any).lightningTimer > 0) mul *= 1.8; // Lightning 1.8x speed (20% slower than before)
+          else if ((p as any).lightningTimer > 0) mul *= 1.44; // Lightning 1.44x speed (20% slower than 1.8x)
           if ((p as any).speedBoostTimer > 0) mul *= 1.10;
           let vCap = speedFromMass(Math.max(1, c.mass)) * mul * 1.6;
           if ((c as any)._forceReturning) vCap *= 3.0; // Allow higher speed for force return
@@ -600,49 +654,6 @@ export class Game {
       }
     }
 
-    // Star aura (optimized for performance)
-    if (this.frameIndex % this.auraEveryN === 0) {
-      // Collect all star players first
-      const starPlayers: {player: PlayerState, cells: Cell[]}[] = [];
-      for (const [, s] of this.players){
-        if (!s.alive || s.invincibleTimer <= 0) continue;
-        starPlayers.push({player: s, cells: s.cells});
-      }
-      
-      // Only process if there are star players
-      if (starPlayers.length > 0) {
-        for (const [, p2] of this.players){
-          if (!p2.alive || p2.invincibleTimer > 0) continue;
-          
-          // Check if this player is already a star player
-          const isStarPlayer = starPlayers.some(sp => sp.player.id === p2.id);
-          if (isStarPlayer) continue;
-          
-          for (const oc of p2.cells){
-            // Check against all star players
-            for (const starData of starPlayers) {
-              for (const sc of starData.cells){
-                const dx = sc.pos.x - oc.pos.x, dy = sc.pos.y - oc.pos.y;
-                const sumR = sc.radius + oc.radius;
-                const limit = 10;
-                const sumPlus = sumR + limit;
-                const d2 = dx*dx + dy*dy;
-                if (d2 <= sumPlus*sumPlus){
-                  const d = Math.sqrt(d2) || 1;
-                  const gap = d - sumR;
-                  const nx = dx / d, ny = dy / d;
-                  const factor = clamp(1 - Math.max(0, gap) / limit, 0, 1);
-                  const accel = 120 * factor * this.auraEveryN;
-                  oc.vel.x += nx * accel * dt; oc.vel.y += ny * accel * dt;
-                  break; // Only apply force from one star cell to avoid stacking
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
     // Magnet aura
     if (this.frameIndex % this.auraEveryN === 0) {
       for (const [, s] of this.players){
@@ -658,7 +669,9 @@ export class Game {
               const gap = d - sc.radius;
               const nx = dx / d, ny = dy / d;
               const factor = clamp(1 - Math.max(0, gap) / 100, 0, 1);
-              const accel = 220 * factor * this.auraEveryN;
+              // Reduced magnet strength to prevent jittering
+              const baseAccel = 140; // Reduced from 220
+              const accel = baseAccel * factor * Math.min(this.auraEveryN, 6); // Cap multiplier at 6
               if (!pl.vel) pl.vel = { x: 0, y: 0 };
               pl.vel.x += nx * accel * dt; pl.vel.y += ny * accel * dt;
             }
@@ -832,10 +845,14 @@ export class Game {
       const placement = rank || 1; // Use rank as placement
       const xpBreakdown = this.matchTracker.finalize(placement);
       
+      // Calculate final mass at time of death (from the last known mass)
+      const finalMass = Math.round(this.lastTrackedMass || this.meMaxMass);
+      
       const stats: GameOverStats = { 
         survivedMs: this.meSurvivalMs, 
         survivedSec: Math.round(this.meSurvivalMs/10)/100, 
         maxMass: Math.round(this.meMaxMass), 
+        finalMass,
         score: Math.round(this.meMaxMass), 
         rank,
         xpBreakdown 
@@ -980,8 +997,16 @@ export class Game {
   private lastFrameTime = 0;
   private fpsHistory: number[] = [];
   private performanceAdjusted = false;
+  // Multiplayer tracking
+  private realPlayerCount = 0;
+  private ws?: WebSocket;
+  private playerId?: number;
   private matchTracker = newMatchTracker(); // XP tracking for current match
   private lastTrackedMass = 0; // Track mass for XP growth calculation
+  
+  // Server messages system
+  private serverMessages: Array<{text: string, timestamp: number, type: string}> = [];
+  private readonly SERVER_MESSAGE_DURATION = 4000; // 4 seconds
 
   constructor(canvas: HTMLCanvasElement){
     this.canvas = canvas;
@@ -1088,6 +1113,91 @@ export class Game {
       this.simplifiedRendering = true;
       this.disableNonEssentialEffects = true;
       this.mobileNoShadows = true;
+    }
+  }
+
+  setWebSocket(ws: WebSocket) {
+    this.ws = ws;
+    ws.addEventListener('message', (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.type === 'playerCount') {
+          this.updatePlayerCount(data.count);
+        } else if (data.type === 'welcome') {
+          this.playerId = data.playerId;
+          this.updatePlayerCount(data.totalPlayers);
+        } else if (data.type === 'playerJoined') {
+          this.addServerMessage(`🎮 ${data.playerName || 'Spieler'} hat die Lobby gejoined`, 'join');
+        } else if (data.type === 'playerLeft') {
+          this.addServerMessage(`👋 ${data.playerName || 'Spieler'} hat die Lobby verlassen`, 'leave');
+        }
+      } catch {}
+    });
+    
+    // Send heartbeat every 10 seconds
+    setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'heartbeat' }));
+      }
+    }, 10000);
+  }
+
+  private addServerMessage(text: string, type: string = 'info') {
+    this.serverMessages.push({
+      text,
+      type,
+      timestamp: Date.now()
+    });
+    
+    // Keep only last 5 messages to avoid screen clutter
+    if (this.serverMessages.length > 5) {
+      this.serverMessages.shift();
+    }
+  }
+
+  private updatePlayerCount(realPlayers: number) {
+    if (realPlayers === this.realPlayerCount) return;
+    
+    const prevCount = this.realPlayerCount;
+    console.log(`🎮 Real players: ${this.realPlayerCount} → ${realPlayers}`);
+    this.realPlayerCount = realPlayers;
+    
+    // Add server message for player count changes
+    if (prevCount > 0) { // Don't show message on initial connection
+      if (realPlayers > prevCount) {
+        this.addServerMessage(`📈 ${realPlayers} Spieler online (+${realPlayers - prevCount})`, 'playerCount');
+      } else if (realPlayers < prevCount) {
+        this.addServerMessage(`📉 ${realPlayers} Spieler online (-${prevCount - realPlayers})`, 'playerCount');
+      }
+    }
+    
+    // Adjust bot count: fewer bots when more real players
+    const baseBotCount = this.isMobile ? 45 : 69;
+    const botReduction = Math.min(realPlayers - 1, baseBotCount - 10); // Keep at least 10 bots
+    const newTargetBotCount = Math.max(10, baseBotCount - botReduction);
+    
+    if (newTargetBotCount !== this.targetBotCount) {
+      console.log(`🤖 Adjusting bots: ${this.targetBotCount} → ${newTargetBotCount}`);
+      const oldTarget = this.targetBotCount;
+      this.targetBotCount = newTargetBotCount;
+      
+      // Remove excess bots if needed
+      if (newTargetBotCount < oldTarget) {
+        this.removeExcessBots(oldTarget - newTargetBotCount);
+      }
+    }
+  }
+
+  private removeExcessBots(count: number) {
+    let removed = 0;
+    for (const [id, player] of this.players) {
+      if (removed >= count) break;
+      if (player.isBot && player.alive) {
+        player.alive = false;
+        player.cells = [];
+        removed++;
+        console.log(`🤖 Removed bot: ${player.name}`);
+      }
     }
   }
 
@@ -1426,6 +1536,32 @@ export class Game {
     this.gameOverTriggered = false;
   }
 
+  // Revival system: respawn with specific mass after paying coins
+  reviveWithMass(targetMass: number) {
+    // Reset most game state but preserve some stats
+    this.gameOverTriggered = false;
+    
+    // Respawn player with target mass
+    const me = this.players.get(this.me);
+    if (me) {
+      me.alive = true;
+      me.invincibleTimer = 3.0; // 3 seconds invincibility after revival
+      me.multishotTimer = 0;
+      me.speedBoostTimer = 0;
+      
+      const pad = this.outsidePad(0);
+      const pos = this.findSafeSpawnPos(pad);
+      
+      // Create cell with target mass
+      me.cells = [makeCell(targetMass, pos)];
+      
+      // Update tracking
+      this.lastTrackedMass = targetMass;
+      
+      // Don't reset survival time or max mass - keep the run going
+    }
+  }
+
   // ---------- Utilities ----------
   totalMass(p: PlayerState){ return sum(p.cells, c=>c.mass); }
   largestCell(p: PlayerState){ return p.cells.reduce((a,b)=> a.mass>=b.mass? a : b ); }
@@ -1586,7 +1722,7 @@ export class Game {
           if (!target){ for (const pu of this.powerups){ const d=Math.hypot(pu.pos.x-c.pos.x, pu.pos.y-c.pos.y); if (d<best){ best=d; target={x:pu.pos.x,y:pu.pos.y}; } } }
           if (target){ const v = { x: target.x - c.pos.x, y: target.y - c.pos.y }; const L = Math.hypot(v.x,v.y)||1; dir = { x: v.x/L, y: v.y/L }; }
         }
-        const speed = 420, mass = 8, range = 1200;
+        const speed = 420, mass = 8, range = 300;
         this.bullets.push({ kind:'rocket', pos:{ x: c.pos.x, y: c.pos.y }, vel:{ x: dir.x*speed, y: dir.y*speed }, mass, owner: p.id, ttl: 3.0, rangeLeft: range, explodeAtEnd: true } as any);
       }
     }
