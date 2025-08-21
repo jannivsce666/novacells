@@ -1,6 +1,5 @@
 // main.ts
 import { Game } from './game';
-// Removed SharedGameClient import to run classic-only
 import { bindInput, getInput, setMusicManager } from './input';
 import { MusicManager } from './musicManager';
 import { addRecord } from './records';
@@ -9,10 +8,8 @@ import { auth, onAuthStateChanged } from './firebase';
 import { StartMenu } from './startMenu';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
-let game: Game; // classic only
-
-// Initialize with classic single-player game
-game = new Game(canvas);
+let game: Game;
+let menu: StartMenu;
 
 // Music Manager
 const musicManager = new MusicManager();
@@ -54,24 +51,32 @@ function showTopNotice(text: string, duration = 2500) {
   window.setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(-50%) translateY(-10px)'; window.setTimeout(() => el.remove(), 250); }, duration);
 }
 
-// Mount Start Menu (StartMenu class API)
-let menu: StartMenu | null = null;
+// Mounten
 function mountMenu() {
-  if (!menu) {
+  if (!(window as any).currentMenu) {
     menu = new StartMenu({
-      onStart: (cfg)=>{
-        currentSkinCanvas = cfg.skinCanvas as HTMLCanvasElement | undefined;
+      onStart: () => {
         try {
-          // Pure classic start
+          // Classic Game only - simple player config
+          const playerConfig = { 
+            name: 'Player',
+            color: '#ff6b35',
+            skin: 'default'
+          };
           game = new Game(canvas);
           game.onGameOver = handleGameOver;
-          (game as Game).spawnPlayers(69, cfg);
+          (game as Game).spawnPlayers(69, playerConfig);
         } catch (mainError) {
           console.error('Failed to start game:', mainError);
           showTopNotice('⚠️ Starte Basis-Spiel...');
+          const playerConfig = { 
+            name: 'Player',
+            color: '#ff6b35',
+            skin: 'default'
+          };
           game = new Game(canvas);
           game.onGameOver = handleGameOver;
-          (game as Game).spawnPlayers(69, cfg);
+          (game as Game).spawnPlayers(69, playerConfig);
         }
       },
       musicManager
@@ -108,7 +113,10 @@ onAuthStateChanged(auth, async (user)=>{
     const { fetchUserCoins, getUserBestMax } = await import('./recordsCloud');
     const coins = await fetchUserCoins(user.uid);
     const best = await getUserBestMax(user.uid);
-    (menu as any)?.setCoins?.(coins);
+    const currentMenu = (window as any).currentMenu;
+    if (currentMenu && typeof currentMenu.setCoins === 'function') {
+      currentMenu.setCoins(coins);
+    }
     try { const { syncWithCloud } = await import('./xp'); await syncWithCloud(user.uid); } catch (err) { console.warn('Failed to sync XP from cloud:', err); }
   } catch {}
 });
