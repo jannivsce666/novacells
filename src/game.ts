@@ -154,12 +154,42 @@ export class Game {
 
     // Zoom: based on total mass and piece count, plus user wheel bias
     const totalMass = Math.max(this.totalMass(me), 100);
-    const baseScale = Math.min(canvas.width/1920, canvas.height/1080);
+    
+    // Better responsive scaling for different screen orientations
+    const screenAspect = canvas.width / canvas.height;
+    let baseScale;
+    
+    if (this.isMobile) {
+      // Mobile-specific scaling that ensures player visibility
+      if (screenAspect > 1.5) {
+        // Landscape mode (iPhone/tablet rotated) - prioritize visibility
+        baseScale = Math.min(canvas.width/2400, canvas.height/1200) * 1.5;
+        console.log(`🍎 iPhone Landscape: baseScale=${baseScale.toFixed(3)} (canvas: ${canvas.width}x${canvas.height})`);
+      } else if (screenAspect < 0.7) {
+        // Portrait mode (tall phones)
+        baseScale = Math.min(canvas.width/1080, canvas.height/2400) * 1.4;
+      } else {
+        // Square-ish (tablets in portrait)
+        baseScale = Math.min(canvas.width/1920, canvas.height/1920) * 1.3;
+      }
+      
+      // Ensure minimum scale for mobile playability
+      baseScale = Math.max(0.8, baseScale);
+    } else {
+      // Desktop scaling
+      baseScale = Math.min(canvas.width/1920, canvas.height/1080);
+    }
+    
     const pieces = Math.max(1, me.cells.length);
     const massFactor = Math.pow(totalMass / 100, 0.12);
     let targetZoomRaw = 1.9 / (massFactor * (1 + (pieces - 1) * 0.05));
     targetZoomRaw += this.zoomBias;
-    const targetZoom = clamp(targetZoomRaw, 1.2, 2.6);
+    
+    // Adjust zoom limits for mobile to ensure player is always visible
+    const minZoom = this.isMobile ? 0.8 : 1.2;
+    const maxZoom = this.isMobile ? 2.0 : 2.6;
+    const targetZoom = clamp(targetZoomRaw, minZoom, maxZoom);
+    
     this.currentZoom = this.currentZoom + (targetZoom - this.currentZoom) * 0.08;
     const scale = baseScale * this.currentZoom;
 
@@ -1153,23 +1183,34 @@ export class Game {
       // Aggressive mobile resolution scaling for performance
       if (this.isMobile) {
         const devicePixelRatio = window.devicePixelRatio || 1;
+        const screenAspect = w / h;
         let scaleFactor = 1.0;
         
-        // Very aggressive scaling for mobile performance
-        if (devicePixelRatio > 2.5) {
-          scaleFactor = 0.6; // Super high DPI (Retina displays)
-        } else if (devicePixelRatio > 1.5) {
-          scaleFactor = 0.7; // High DPI
+        // Different scaling strategies for different orientations
+        if (screenAspect > 1.5) {
+          // Landscape mode - less aggressive scaling to keep player visible
+          if (devicePixelRatio > 2.5) {
+            scaleFactor = 0.75; // Less aggressive for landscape
+          } else if (devicePixelRatio > 1.5) {
+            scaleFactor = 0.85;
+          } else {
+            scaleFactor = 0.9;
+          }
         } else {
-          scaleFactor = 0.8; // Standard DPI
+          // Portrait mode - can be more aggressive
+          if (devicePixelRatio > 2.5) {
+            scaleFactor = 0.6;
+          } else if (devicePixelRatio > 1.5) {
+            scaleFactor = 0.7;
+          } else {
+            scaleFactor = 0.8;
+          }
         }
         
-        // Additional scaling based on screen size (tablets vs phones)
-        const screenArea = w * h;
-        if (screenArea > 1000000) { // Large tablet
-          scaleFactor *= 0.9;
-        } else if (screenArea < 400000) { // Small phone
-          scaleFactor *= 1.1; // Less aggressive on small screens
+        // Ensure minimum resolution for playability
+        const minDimension = Math.min(w, h);
+        if (minDimension * scaleFactor < 400) {
+          scaleFactor = 400 / minDimension;
         }
         
         w = Math.round(w * scaleFactor);
@@ -1180,6 +1221,12 @@ export class Game {
         canvas.width = w;
         canvas.height = h;
         this.level?.onResize?.();
+        
+        // Log orientation changes for debugging
+        if (this.isMobile) {
+          const orientation = w > h ? 'landscape' : 'portrait';
+          console.log(`📱 Canvas resized: ${w}x${h} (${orientation})`);
+        }
       }
     };
     window.addEventListener('resize', updateCanvasSize);
