@@ -1,5 +1,58 @@
-html,body{margin:0;height:100%;overflow:hidden;background:#030816}
-canvas#game{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+/* Ultra-optimized CSS for mobile game performance */
+html,body{
+  margin:0;
+  height:100%;
+  overflow:hidden;
+  background:#030816;
+  /* Critical mobile optimizations */
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:none;
+  touch-action:manipulation;
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+
+canvas#game{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  display:block;
+  /* Hardware acceleration and performance */
+  transform:translateZ(0);
+  -webkit-transform:translateZ(0);
+  will-change:transform;
+  image-rendering:pixelated;
+  image-rendering:-moz-crisp-edges;
+  image-rendering:crisp-edges;
+  image-rendering:optimizeSpeed;
+}
+
+/* Mobile performance optimizations */
+@media (max-width: 1024px) {
+  html,body{
+    -webkit-text-size-adjust:100%;
+    text-size-adjust:100%;
+  }
+  
+  canvas#game{
+    /* Force GPU layer for better performance */
+    backface-visibility:hidden;
+    -webkit-backface-visibility:hidden;
+    perspective:1000px;
+    -webkit-perspective:1000px;
+    image-rendering:optimizeSpeed !important;
+  }
+}
+
+/* High DPI display optimizations */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  canvas#game{
+    image-rendering:optimizeSpeed;
+  }
+}
+
 /* Prefer modern viewport units on mobile Safari/Chrome to avoid URL bar issues */
 @supports (height: 100svh){
   canvas#game{height:100svh}
@@ -12,5 +65,23 @@ canvas#game{position:fixed;inset:0;width:100vw;height:100vh;display:block}
   html,body{height:-webkit-fill-available}
   canvas#game{height:-webkit-fill-available}
 }
-@keyframes pop{from{transform:scale(.94);opacity:.0}to{transform:scale(1);opacity:1}}
-@keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* Reduced motion animations for better performance */
+@keyframes pop{
+  from{transform:scale(.94);opacity:.0}
+  to{transform:scale(1);opacity:1}
+}
+
+@keyframes slideDown{
+  from{opacity:0;transform:translateX(-50%) translateY(-20px)}
+  to{opacity:1;transform:translateX(-50%) translateY(0)}
+}
+
+/* Disable animations on low-end devices */
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+  }
+}

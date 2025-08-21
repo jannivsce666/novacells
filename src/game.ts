@@ -185,11 +185,17 @@ export class Game {
       this.level.drawRainbowBorder?.(ctx as any, pad, this.world as any);
     }
 
-    // Pellets
+    // Pellets - simplified rendering on mobile
     for (const pl of this.pellets){
       ctx.beginPath();
-      ctx.arc(pl.pos.x, pl.pos.y, Math.max(2, Math.sqrt(pl.mass)*0.8), 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      if (this.isMobile) {
+        // Simple solid circles on mobile
+        ctx.arc(pl.pos.x, pl.pos.y, Math.max(1.5, Math.sqrt(pl.mass)*0.6), 0, Math.PI*2);
+        ctx.fillStyle = '#fff';
+      } else {
+        ctx.arc(pl.pos.x, pl.pos.y, Math.max(2, Math.sqrt(pl.mass)*0.8), 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      }
       ctx.fill();
     }
 
@@ -265,6 +271,7 @@ export class Game {
         
         ctx.restore();
       } else {
+        // Regular virus rendering - simplified on mobile
         const isRed = vv.kind === 'red';
         const spikes = isRed ? 18 : 14;
         const rOuter = vv.radius;
@@ -280,11 +287,42 @@ export class Game {
           if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
         }
         ctx.closePath();
-        if (isRed){ ctx.shadowColor='rgba(255,60,60,0.55)'; ctx.shadowBlur=18; ctx.fillStyle='rgba(255,60,60,0.92)'; ctx.strokeStyle='rgba(120,0,0,0.95)'; }
-        else { ctx.shadowColor='rgba(0,255,160,0.45)'; ctx.shadowBlur=14; ctx.fillStyle='rgba(66,245,152,0.9)'; ctx.strokeStyle='rgba(0,120,60,0.9)'; }
-        ctx.lineWidth = 3; ctx.fill(); ctx.stroke();
-        // core
-        ctx.beginPath(); ctx.arc(0,0, rInner*0.45, 0, Math.PI*2); ctx.fillStyle = isRed? 'rgba(255,120,120,0.55)' : 'rgba(120,255,200,0.45)'; ctx.fill();
+        
+        if (this.isMobile || this.skipShadows) {
+          // No shadows on mobile for performance
+          if (isRed) {
+            ctx.fillStyle='rgba(255,60,60,0.92)'; 
+            ctx.strokeStyle='rgba(120,0,0,0.95)';
+          } else {
+            ctx.fillStyle='rgba(66,245,152,0.9)'; 
+            ctx.strokeStyle='rgba(0,120,60,0.9)';
+          }
+        } else {
+          // Full effects on desktop
+          if (isRed) {
+            ctx.shadowColor='rgba(255,60,60,0.55)'; 
+            ctx.shadowBlur=18; 
+            ctx.fillStyle='rgba(255,60,60,0.92)'; 
+            ctx.strokeStyle='rgba(120,0,0,0.95)';
+          } else {
+            ctx.shadowColor='rgba(0,255,160,0.45)'; 
+            ctx.shadowBlur=14; 
+            ctx.fillStyle='rgba(66,245,152,0.9)'; 
+            ctx.strokeStyle='rgba(0,120,60,0.9)';
+          }
+        }
+        
+        ctx.lineWidth = this.isMobile ? 2 : 3;
+        ctx.fill(); 
+        ctx.stroke();
+        
+        // Core - simplified on mobile
+        if (!this.isMobile) {
+          ctx.beginPath(); 
+          ctx.arc(0,0, rInner*0.45, 0, Math.PI*2); 
+          ctx.fillStyle = isRed? 'rgba(255,120,120,0.55)' : 'rgba(120,255,200,0.45)'; 
+          ctx.fill();
+        }
         ctx.restore();
       }
     }
@@ -292,59 +330,139 @@ export class Game {
     // PowerUps
     for (const pu of this.powerups){ drawPowerUp(ctx, pu); }
 
-    // Bullets
+    // Bullets - simplified on mobile
     for (const b of this.bullets){
       if (b.kind==='rocket'){
-        ctx.save(); ctx.translate(b.pos.x, b.pos.y); const ang=Math.atan2(b.vel.y, b.vel.x); ctx.rotate(ang);
-        ctx.fillStyle='rgba(200,220,255,0.95)'; ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(-6,4); ctx.lineTo(-6,-4); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(-12,3); ctx.lineTo(-12,-3); ctx.closePath(); ctx.fillStyle='rgba(255,120,0,0.9)'; ctx.fill();
-        ctx.restore();
+        if (this.isMobile) {
+          // Simplified rocket on mobile
+          ctx.save(); 
+          ctx.translate(b.pos.x, b.pos.y); 
+          const ang=Math.atan2(b.vel.y, b.vel.x); 
+          ctx.rotate(ang);
+          ctx.fillStyle='rgba(200,220,255,0.95)'; 
+          ctx.beginPath(); 
+          ctx.moveTo(6,0); ctx.lineTo(-4,3); ctx.lineTo(-4,-3); 
+          ctx.closePath(); 
+          ctx.fill();
+          ctx.restore();
+        } else {
+          // Full rocket rendering on desktop
+          ctx.save(); ctx.translate(b.pos.x, b.pos.y); const ang=Math.atan2(b.vel.y, b.vel.x); ctx.rotate(ang);
+          ctx.fillStyle='rgba(200,220,255,0.95)'; ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(-6,4); ctx.lineTo(-6,-4); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(-12,3); ctx.lineTo(-12,-3); ctx.closePath(); ctx.fillStyle='rgba(255,120,0,0.9)'; ctx.fill();
+          ctx.restore();
+        }
       } else {
-        ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, Math.sqrt(b.mass), 0, Math.PI*2);
-        ctx.fillStyle='rgba(255,120,120,0.95)'; ctx.fill();
+        ctx.beginPath(); 
+        const radius = this.isMobile ? Math.sqrt(b.mass) * 0.8 : Math.sqrt(b.mass);
+        ctx.arc(b.pos.x, b.pos.y, radius, 0, Math.PI*2);
+        ctx.fillStyle='rgba(255,120,120,0.95)'; 
+        ctx.fill();
       }
     }
 
-    // Players with skin fill
+    // Players with skin fill - optimized for mobile
     for (const [,p] of this.players){
       if (!p.alive) continue;
       for (const c of p.cells){
         ctx.save();
-        if (p.invincibleTimer>0){ ctx.shadowColor='rgba(255,215,0,0.9)'; ctx.shadowBlur=30; }
-        ctx.beginPath(); ctx.arc(c.pos.x, c.pos.y, c.radius, 0, Math.PI*2);
+        
+        // Simplified invincibility effect on mobile
+        if (p.invincibleTimer>0) {
+          if (this.isMobile) {
+            ctx.strokeStyle = 'rgba(255,215,0,0.9)';
+            ctx.lineWidth = 4;
+          } else {
+            ctx.shadowColor='rgba(255,215,0,0.9)'; 
+            ctx.shadowBlur=30;
+          }
+        }
+        
+        ctx.beginPath(); 
+        ctx.arc(c.pos.x, c.pos.y, c.radius, 0, Math.PI*2);
+        
+        // Skin rendering
         const sc = (p as any).skinCanvas as HTMLCanvasElement | undefined;
-        if (sc){ ctx.save(); ctx.clip(); ctx.drawImage(sc, c.pos.x - c.radius, c.pos.y - c.radius, c.radius*2, c.radius*2); ctx.restore(); }
-        else { ctx.fillStyle = (p.skinPattern as any) || p.color; ctx.fill(); }
-        ctx.lineWidth = 3; ctx.strokeStyle = p.invincibleTimer>0 ? 'rgba(255,215,0,0.9)' : 'rgba(0,0,0,0.35)'; ctx.stroke();
+        if (sc && !this.simplifiedRendering){ 
+          ctx.save(); 
+          ctx.clip(); 
+          ctx.drawImage(sc, c.pos.x - c.radius, c.pos.y - c.radius, c.radius*2, c.radius*2); 
+          ctx.restore(); 
+        } else { 
+          ctx.fillStyle = (p.skinPattern as any) || p.color; 
+          ctx.fill(); 
+        }
+        
+        // Border
+        ctx.lineWidth = this.isMobile ? 2 : 3; 
+        ctx.strokeStyle = p.invincibleTimer>0 ? 'rgba(255,215,0,0.9)' : 'rgba(0,0,0,0.35)'; 
+        ctx.stroke();
         ctx.restore();
       }
+      
+      // Player name and mass - simplified on mobile
       const lc = this.largestCell(p);
-      ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.font='600 14px system-ui, sans-serif'; ctx.textAlign='center';
-      ctx.fillText(`${p.name ?? ''} ${Math.round(this.totalMass(p))}`, lc.pos.x, lc.pos.y - lc.radius - 10);
+      ctx.fillStyle='rgba(255,255,255,0.9)'; 
+      ctx.font = this.isMobile ? '600 12px system-ui, sans-serif' : '600 14px system-ui, sans-serif';
+      ctx.textAlign='center';
+      const text = this.isMobile ? `${Math.round(this.totalMass(p))}` : `${p.name ?? ''} ${Math.round(this.totalMass(p))}`;
+      ctx.fillText(text, lc.pos.x, lc.pos.y - lc.radius - 10);
     }
 
-    // Particles
-    for (const p of this.particles){
-      if (p.type==='spark'){
-        ctx.save(); ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = `hsla(${p.hue},100%,60%,${0.9*p.life})`;
-        ctx.beginPath(); ctx.arc(p.pos.x, p.pos.y, p.size, 0, Math.PI*2); ctx.fill(); ctx.restore();
-      } else if (p.type==='shock'){
-        ctx.save(); const r = (1-p.life)*120 + 8; ctx.strokeStyle = `rgba(200,220,255,${p.life*0.5})`; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(p.pos.x, p.pos.y, r, 0, Math.PI*2); ctx.stroke(); ctx.restore();
-      } else if (p.type==='streak'){
-        ctx.save(); ctx.globalAlpha = Math.max(0, p.life*0.8); ctx.strokeStyle = `hsla(${p.hue},100%,70%,${0.85*p.life})`; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(p.pos.x - p.vel.x*0.05, p.pos.y - p.vel.y*0.05); ctx.lineTo(p.pos.x, p.pos.y); ctx.stroke(); ctx.restore();
-      } else if (p.type==='smoke'){
-        ctx.save(); ctx.globalAlpha = Math.max(0, p.life*0.6); ctx.fillStyle = 'rgba(180,200,255,0.3)';
-        ctx.beginPath(); ctx.arc(p.pos.x, p.pos.y, p.size*1.2, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    // Particles - heavily reduced on mobile
+    if (!this.disableNonEssentialEffects) {
+      for (const p of this.particles){
+        if (p.type==='spark'){
+          ctx.save(); 
+          ctx.globalAlpha = Math.max(0, p.life); 
+          ctx.fillStyle = `hsla(${p.hue},100%,60%,${0.9*p.life})`;
+          ctx.beginPath(); 
+          const size = this.isMobile ? p.size * 0.7 : p.size;
+          ctx.arc(p.pos.x, p.pos.y, size, 0, Math.PI*2); 
+          ctx.fill(); 
+          ctx.restore();
+        } else if (p.type==='shock' && !this.isMobile){
+          // Skip shock effects on mobile
+          ctx.save(); 
+          const r = (1-p.life)*120 + 8; 
+          ctx.strokeStyle = `rgba(200,220,255,${p.life*0.5})`; 
+          ctx.lineWidth = 3;
+          ctx.beginPath(); 
+          ctx.arc(p.pos.x, p.pos.y, r, 0, Math.PI*2); 
+          ctx.stroke(); 
+          ctx.restore();
+        } else if (p.type==='streak' && !this.isMobile){
+          // Skip streak effects on mobile
+          ctx.save(); 
+          ctx.globalAlpha = Math.max(0, p.life*0.8); 
+          ctx.strokeStyle = `hsla(${p.hue},100%,70%,${0.85*p.life})`; 
+          ctx.lineWidth = 2;
+          ctx.beginPath(); 
+          ctx.moveTo(p.pos.x - p.vel.x*0.05, p.pos.y - p.vel.y*0.05); 
+          ctx.lineTo(p.pos.x, p.pos.y); 
+          ctx.stroke(); 
+          ctx.restore();
+        } else if (p.type==='smoke' && !this.isMobile){
+          // Skip smoke effects on mobile
+          ctx.save(); 
+          ctx.globalAlpha = Math.max(0, p.life*0.6); 
+          ctx.fillStyle = 'rgba(180,200,255,0.3)';
+          ctx.beginPath(); 
+          ctx.arc(p.pos.x, p.pos.y, p.size*1.2, 0, Math.PI*2); 
+          ctx.fill(); 
+          ctx.restore();
+        }
       }
     }
 
     // End camera and vignette-like overlay
     ctx.restore();
-    // soft vignette
-    const g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height)*0.6, canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height)*0.9);
-    g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.35)'); ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
+    
+    // Skip vignette on mobile for performance
+    if (!this.isMobile && !this.skipVignette) {
+      const g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height)*0.6, canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height)*0.9);
+      g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.35)'); ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
 
     // Server messages overlay
     this.drawServerMessages(ctx);
@@ -410,7 +528,8 @@ export class Game {
       const now = performance.now();
       if (this.lastFrameTime > 0) {
         this.frameTime = now - this.lastFrameTime;
-        this.fpsHistory.push(1000 / this.frameTime);
+        const currentFps = 1000 / this.frameTime;
+        this.fpsHistory.push(currentFps);
         
         // Keep only last 60 frames for averaging
         if (this.fpsHistory.length > 60) {
@@ -423,8 +542,17 @@ export class Game {
           if (avgFps < 45) {
             this.autoAdjustPerformance();
             this.performanceAdjusted = true;
-            console.log('🔧 Auto-adjusted performance for mobile device');
+            console.log(`🔧 Auto-adjusted performance for mobile device. Avg FPS: ${avgFps.toFixed(1)}`);
           }
+        }
+        
+        // Log performance stats every 5 seconds
+        if (Math.floor(now / 5000) !== Math.floor(this.lastFrameTime / 5000)) {
+          const avgFps = this.fpsHistory.length > 0 
+            ? this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length 
+            : 0;
+          const minFps = this.fpsHistory.length > 0 ? Math.min(...this.fpsHistory) : 0;
+          console.log(`📊 Mobile Performance: Avg ${avgFps.toFixed(1)}fps, Min ${minFps.toFixed(1)}fps, Entities: ${this.players.size + this.pellets.length + this.viruses.length}`);
         }
       }
       this.lastFrameTime = now;
@@ -811,21 +939,23 @@ export class Game {
     // Self merge
     for (const [, p] of this.players) if (p.alive) this.doSelfMergeForPlayer(p, dt);
 
-    // Star trail particles for invincibility (reduced on mobile)
+    // Star trail particles for invincibility (heavily reduced on mobile)
     for (const [, p] of this.players){ 
       if (!p.alive) continue; 
       if (p.invincibleTimer>0){ 
         for (const c of p.cells){ 
-          const particleChance = this.isMobile ? 0.15 : 0.5; // Much fewer particles on mobile
+          const particleChance = this.isMobile ? 0.05 : 0.5; // Much fewer particles on mobile
           if (Math.random()<particleChance){ 
+            // Only create spark particles on mobile (skip complex trail effects)
+            const particleType = this.isMobile ? 'spark' : 'streak';
             this.particles.push({ 
               pos:{x:c.pos.x + rand(-c.radius*0.2, c.radius*0.2), y:c.pos.y + rand(-c.radius*0.2, c.radius*0.2)}, 
               vel:{x:rand(-40,40), y:rand(-40,40)}, 
-              life:1, 
-              size: rand(2,4), 
+              life:this.isMobile ? 0.5 : 1, // Shorter life on mobile
+              size: this.isMobile ? rand(1,2) : rand(2,4), 
               hue: randInt(0,360), 
-              type:'streak', 
-              fade: rand(0.6,1.0) 
+              type: particleType, 
+              fade: this.isMobile ? rand(0.3,0.6) : rand(0.6,1.0) 
             }); 
           } 
         } 
@@ -989,6 +1119,9 @@ export class Game {
   private reducedVisualEffects = false;
   private simplifiedRendering = false;
   private disableNonEssentialEffects = false;
+  private skipVignette = false;
+  private skipGradients = false;
+  private skipShadows = false;
   private pelletTarget = 1000;
   private initialPelletCount = 360;
   private maxParticles = 900;
@@ -1017,10 +1150,28 @@ export class Game {
       let w = Math.max(1, Math.round(r.width));
       let h = Math.max(1, Math.round(r.height));
       
-      // On mobile, optionally reduce resolution for better performance
-      if (this.isMobile && this.simplifiedRendering) {
+      // Aggressive mobile resolution scaling for performance
+      if (this.isMobile) {
         const devicePixelRatio = window.devicePixelRatio || 1;
-        const scaleFactor = devicePixelRatio > 2 ? 0.75 : 0.85; // Reduce resolution on high-DPI devices
+        let scaleFactor = 1.0;
+        
+        // Very aggressive scaling for mobile performance
+        if (devicePixelRatio > 2.5) {
+          scaleFactor = 0.6; // Super high DPI (Retina displays)
+        } else if (devicePixelRatio > 1.5) {
+          scaleFactor = 0.7; // High DPI
+        } else {
+          scaleFactor = 0.8; // Standard DPI
+        }
+        
+        // Additional scaling based on screen size (tablets vs phones)
+        const screenArea = w * h;
+        if (screenArea > 1000000) { // Large tablet
+          scaleFactor *= 0.9;
+        } else if (screenArea < 400000) { // Small phone
+          scaleFactor *= 1.1; // Less aggressive on small screens
+        }
+        
         w = Math.round(w * scaleFactor);
         h = Math.round(h * scaleFactor);
       }
@@ -1034,85 +1185,151 @@ export class Game {
     window.addEventListener('resize', updateCanvasSize);
     try { (window as any).visualViewport?.addEventListener('resize', updateCanvasSize, { passive: true } as any); } catch {}
 
-    const ctx = canvas.getContext('2d');
+    // Try to get WebGL context first for hardware acceleration
+    let ctx: CanvasRenderingContext2D | null = null;
+    
+    // For mobile devices, try to enable hardware acceleration
+    if (this.detectMobile()) {
+      try {
+        // Create a 2D context with alpha disabled for better performance
+        ctx = canvas.getContext('2d', { 
+          alpha: false,
+          desynchronized: true, // Reduce input lag
+          willReadFrequently: false // Optimize for drawing, not reading
+        });
+      } catch {}
+    }
+    
+    // Fallback to standard 2D context
+    if (!ctx) {
+      ctx = canvas.getContext('2d');
+    }
+    
     if (!ctx) throw new Error('no 2d context');
     this.ctx = ctx;
+
+    // Optimize 2D context for mobile performance
+    if (this.detectMobile()) {
+      // Disable image smoothing for better performance
+      this.ctx.imageSmoothingEnabled = false;
+      
+      // Set low quality for better performance
+      try {
+        (this.ctx as any).imageSmoothingQuality = 'low';
+      } catch {}
+    }
 
     this.level = new LevelDesign(canvas);
 
     // Enhanced mobile detection and performance optimization
-    try {
-      this.isMobile = typeof window !== 'undefined' && !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-      
-      // Check for mobile optimization hint from start menu
-      const mobileOptLevel = sessionStorage.getItem('mobileOptimized');
-      if (mobileOptLevel === 'true') {
-        // User chose full optimization
-        this.reducedVisualEffects = true;
-        this.simplifiedRendering = true;
-        this.disableNonEssentialEffects = true;
-      } else if (mobileOptLevel === 'basic') {
-        // User chose basic optimization
-        this.reducedVisualEffects = true;
-      }
-      
-      // Detect low-end devices by checking available memory
-      if (typeof navigator !== 'undefined' && (navigator as any).deviceMemory) {
-        const deviceMemory = (navigator as any).deviceMemory;
-        if (deviceMemory <= 2) {
-          // Low memory device - enable all optimizations
-          this.reducedVisualEffects = true;
-          this.simplifiedRendering = true;
-          this.disableNonEssentialEffects = true;
-        }
-      }
-    } catch { this.isMobile = false; }
+    this.isMobile = this.detectMobile();
     this.applyPerfPreset();
 
     updateCanvasSize();
   }
 
+  private detectMobile(): boolean {
+    if (typeof window === 'undefined') return false;
+    
+    // Multiple detection methods for better accuracy
+    const mobileChecks = [
+      // Touch capability
+      'ontouchstart' in window,
+      // Pointer type
+      window.matchMedia && window.matchMedia('(pointer: coarse)').matches,
+      // User agent (backup)
+      /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+      // Screen size (backup)
+      window.screen.width < 1024 || window.screen.height < 1024
+    ];
+    
+    // Consider mobile if at least 2 checks pass
+    const mobileScore = mobileChecks.filter(Boolean).length;
+    return mobileScore >= 2;
+  }
+
   private applyPerfPreset(){
     if (this.isMobile){
-      // Aggressive mobile optimizations for smooth 60fps
-      this.targetBotCount = 45; // Reduce bots significantly
-      this.pelletTarget = 400; // Much fewer pellets
-      this.initialPelletCount = 80;
-      this.greenMax = Math.min(this.greenMax, 6); // Fewer viruses
-      this.redMax = Math.min(this.redMax, 2);
-      this.redBulletsPerVolley = Math.min(this.redBulletsPerVolley, 6);
-      this.auraEveryN = 12; // Update auras every 12 frames instead of 5
+      // Ultra-aggressive mobile optimizations for 60fps
+      this.targetBotCount = 25; // Drastically reduce bots
+      this.pelletTarget = 200; // Much fewer pellets
+      this.initialPelletCount = 40;
+      this.greenMax = Math.min(this.greenMax, 3); // Minimal viruses
+      this.redMax = Math.min(this.redMax, 1);
+      this.redBulletsPerVolley = Math.min(this.redBulletsPerVolley, 4);
+      this.auraEveryN = 20; // Update auras every 20 frames instead of 5
       this.mobileNoShadows = true;
-      this.maxParticles = 150; // Much fewer particles
-      this.maxEatsPerFrame = 32; // Limit collision processing
+      this.maxParticles = 50; // Minimal particles
+      this.maxEatsPerFrame = 16; // Reduce collision processing significantly
+      
+      // Reduce world size for better performance
+      this.world = { w: 3000, h: 3000 }; // Smaller world
       
       // Mobile-specific performance flags
       this.reducedVisualEffects = true;
       this.simplifiedRendering = true;
       this.disableNonEssentialEffects = true;
+      
+      // Disable expensive visual effects
+      this.skipVignette = true;
+      this.skipGradients = true;
+      this.skipShadows = true;
+      
+      // Increase physics time step for less computation
+      this.botTickStep = 1/20; // 20 Hz instead of 30 Hz
+      this.moveTickStep = 1/25; // 25 Hz instead of 30 Hz
+      
+      console.log('🔧 Applied ultra-aggressive mobile optimizations');
     } else {
       this.targetBotCount = 69; // desktop also 69
       this.pelletTarget = 1000;
       this.initialPelletCount = 360;
       this.maxParticles = 900;
+      this.world = { w: 5000, h: 5000 }; // Full world size
     }
   }
 
   private autoAdjustPerformance() {
     // Emergency performance adjustments for struggling devices
     if (this.isMobile) {
-      this.targetBotCount = Math.max(20, this.targetBotCount - 10);
-      this.pelletTarget = Math.max(200, this.pelletTarget - 100);
-      this.maxParticles = Math.max(50, this.maxParticles - 50);
-      this.auraEveryN = Math.min(20, this.auraEveryN + 5);
-      this.greenMax = Math.max(3, this.greenMax - 2);
-      this.redMax = Math.max(1, this.redMax - 1);
+      console.log('⚠️ Performance is struggling, applying emergency optimizations...');
+      
+      // Drastically reduce game entities
+      this.targetBotCount = Math.max(10, this.targetBotCount - 15);
+      this.pelletTarget = Math.max(50, this.pelletTarget - 150);
+      this.maxParticles = Math.max(20, this.maxParticles - 30);
+      this.auraEveryN = Math.min(30, this.auraEveryN + 10);
+      this.greenMax = Math.max(1, this.greenMax - 2);
+      this.redMax = Math.max(0, this.redMax - 1);
       
       // Force all optimizations
       this.reducedVisualEffects = true;
       this.simplifiedRendering = true;
       this.disableNonEssentialEffects = true;
       this.mobileNoShadows = true;
+      this.skipVignette = true;
+      this.skipGradients = true;
+      this.skipShadows = true;
+      
+      // Reduce frame rate target for stability
+      this.maxEatsPerFrame = Math.max(8, this.maxEatsPerFrame - 8);
+      
+      // Reduce physics update rates even further
+      this.botTickStep = 1/15; // 15 Hz
+      this.moveTickStep = 1/20; // 20 Hz
+      
+      // Force lower resolution if context supports it
+      try {
+        this.ctx.imageSmoothingEnabled = false;
+        (this.ctx as any).imageSmoothingQuality = 'low';
+      } catch {}
+      
+      console.log('🔧 Emergency optimizations applied:', {
+        bots: this.targetBotCount,
+        pellets: this.pelletTarget,
+        particles: this.maxParticles,
+        auraEveryN: this.auraEveryN
+      });
     }
   }
 
@@ -1729,21 +1946,47 @@ export class Game {
   }
 
   private spawnExplosion(x:number,y:number){
-    const sparks = 24;
+    const sparks = this.isMobile ? 8 : 24; // Fewer sparks on mobile
     for (let i=0;i<sparks;i++){
-      const ang = (i/sparks)*Math.PI*2 + Math.random()*0.3; const spd = rand(120,340);
-      this.particles.push({ pos:{x,y}, vel:{x:Math.cos(ang)*spd, y:Math.sin(ang)*spd}, life:1, size: rand(2,4), hue: randInt(180,240), type:'spark', fade: rand(1.2,1.8) });
+      const ang = (i/sparks)*Math.PI*2 + Math.random()*0.3; 
+      const spd = this.isMobile ? rand(80,200) : rand(120,340); // Reduced speed on mobile
+      this.particles.push({ 
+        pos:{x,y}, 
+        vel:{x:Math.cos(ang)*spd, y:Math.sin(ang)*spd}, 
+        life: this.isMobile ? 0.6 : 1, // Shorter life on mobile
+        size: this.isMobile ? rand(1,2) : rand(2,4), 
+        hue: randInt(180,240), 
+        type:'spark', 
+        fade: this.isMobile ? rand(0.8,1.2) : rand(1.2,1.8)
+      });
     }
-    this.particles.push({ pos:{x,y}, vel:{x:0,y:0}, life:1, size:6, hue:200, type:'shock', fade:1.4 });
+    
+    // Skip shock wave on mobile
+    if (!this.isMobile) {
+      this.particles.push({ pos:{x,y}, vel:{x:0,y:0}, life:1, size:6, hue:200, type:'shock', fade:1.4 });
+    }
   }
 
   private spawnImplosion(x:number,y:number){
-    const sparks = 16;
+    const sparks = this.isMobile ? 6 : 16; // Fewer sparks on mobile
     for (let i=0;i<sparks;i++){
-      const ang = (i/sparks)*Math.PI*2 + Math.random()*0.4; const spd = rand(60,180);
-      this.particles.push({ pos:{x:x+Math.cos(ang)*20, y:y+Math.sin(ang)*20}, vel:{x:-Math.cos(ang)*spd, y:-Math.sin(ang)*spd}, life:1, size: rand(2,3), hue: randInt(0,60), type:'spark', fade: rand(0.9,1.2) });
+      const ang = (i/sparks)*Math.PI*2 + Math.random()*0.4; 
+      const spd = this.isMobile ? rand(40,120) : rand(60,180); // Reduced speed on mobile
+      this.particles.push({ 
+        pos:{x:x+Math.cos(ang)*20, y:y+Math.sin(ang)*20}, 
+        vel:{x:-Math.cos(ang)*spd, y:-Math.sin(ang)*spd}, 
+        life: this.isMobile ? 0.6 : 1, // Shorter life on mobile
+        size: this.isMobile ? rand(1,2) : rand(2,3), 
+        hue: randInt(0,60), 
+        type:'spark', 
+        fade: this.isMobile ? rand(0.6,0.9) : rand(0.9,1.2) 
+      });
     }
-    this.particles.push({ pos:{x,y}, vel:{x:0,y:0}, life:1, size:5, hue:30, type:'shock', fade:1.1 });
+    
+    // Skip shock wave on mobile
+    if (!this.isMobile) {
+      this.particles.push({ pos:{x,y}, vel:{x:0,y:0}, life:1, size:5, hue:30, type:'shock', fade:1.1 });
+    }
   }
 
   private resolveEatsOnce(): boolean {
@@ -1879,7 +2122,12 @@ export class Game {
       p.life -= dt/(p.fade || 1);
       if (p.life <= 0) this.particles.splice(i,1);
     }
-    if (this.particles.length > this.maxParticles) this.particles.splice(0, this.particles.length - this.maxParticles);
+    
+    // Aggressive particle limits on mobile
+    const maxParticles = this.isMobile ? 30 : this.maxParticles;
+    if (this.particles.length > maxParticles) {
+      this.particles.splice(0, this.particles.length - maxParticles);
+    }
   }
 
   private getRank(id:string): number {

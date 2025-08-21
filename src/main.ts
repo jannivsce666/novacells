@@ -425,13 +425,51 @@ function updateRankHud(ts:number){
   } catch { rankHud.style.display = 'none'; }
 }
 
-// Game Loop
+// Game Loop with mobile optimization
 let last = performance.now();
+
+// Detect mobile for frame rate optimization
+const isMobile = typeof window !== 'undefined' && 
+  (window.matchMedia?.('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
+
+const TARGET_FPS = isMobile ? 50 : 60; // Lower target FPS on mobile for battery
+const FRAME_TIME = 1000 / TARGET_FPS;
+let frameSkipCounter = 0;
+
 function loop(ts:number){
-  const dt = ts - last; last = ts;
-  game.step(dt, getInput(), ts);
-  game.draw(ts);
-  updateRankHud(ts);
+  const dt = ts - last;
+  
+  // Frame rate limiting for mobile devices
+  if (isMobile) {
+    if (dt < FRAME_TIME * 0.9) {
+      requestAnimationFrame(loop);
+      return;
+    }
+    
+    // Skip every 4th frame on very low-end devices if performance is bad
+    if (dt > 25) { // If frame time is over 25ms (40fps)
+      frameSkipCounter++;
+      if (frameSkipCounter % 4 === 0) {
+        requestAnimationFrame(loop);
+        return;
+      }
+    }
+  }
+  
+  last = ts;
+  
+  // Cap delta time to prevent spiral of death
+  const cappedDt = Math.min(dt, 33.33); // Cap at 30fps worth of time
+  
+  try {
+    game.step(cappedDt, getInput(), ts);
+    game.draw(ts);
+    updateRankHud(ts);
+  } catch (error) {
+    console.error('Game loop error:', error);
+    // Continue the loop even if there's an error
+  }
+  
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
